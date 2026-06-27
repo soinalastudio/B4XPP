@@ -122,3 +122,84 @@ assert(main.includes('B4XPP_Runtime.Dispatch(animal, "Speak", B4XPP_Runtime.Args
 assert.strictEqual(workspaceResult.diagnostics.filter(d => d.severity === 'error').length, 0);
 
 console.log('B4X++ transpiler tests OK');
+
+const visibilitySource = `#Class VisibilityBase
+#Property Protected AngleDegrees As Double = 0
+Sub Class_Globals
+    Private mSecret As String
+    Protected mShared As String
+End Sub
+Private Sub SecretName As String
+    Return mSecret
+End Sub
+Protected Virtual Sub ProtectedName As String
+    Return mShared
+End Sub
+Public Virtual Sub PublicName As String
+    Return ProtectedName
+End Sub
+#End Class
+
+#Class VisibilityChild Extends VisibilityBase
+Override Sub PublicName As String
+    Return Super.PublicName
+End Sub
+Public Sub ReadShared As String
+    Return mShared
+End Sub
+#End Class
+`;
+const visibilityResult = transpileText(path.join(__dirname, 'VisibilityDemo.bx'), visibilitySource, {
+  addGeneratedHeader: true,
+  workspaceRoot: path.join(__dirname, '..')
+});
+assert.strictEqual(visibilityResult.diagnostics.filter(d => d.severity === 'error').length, 0);
+const visibilityChild = visibilityResult.outputs.find(o => o.fileName === 'VisibilityChild.bas').content;
+assert(visibilityChild.includes('Private B4XPP_Private_VisibilityBase_mSecret As String'), 'Inherited Private fields must be renamed during flattening');
+assert(visibilityChild.includes('Private mShared As String'), 'Protected fields must be lowered to Private but keep their inherited name');
+assert(visibilityChild.includes('Private Sub getAngleDegrees As Double'), 'Protected #Property getters must be Private in generated B4X');
+assert(visibilityChild.includes('Private Sub ProtectedName As String'), 'Protected Sub must be Private in generated B4X');
+assert(visibilityChild.includes('B4XPP_Private_VisibilityBase_SecretName'), 'Inherited Private methods must be renamed during flattening');
+
+const invalidPrivateOverride = transpileText(path.join(__dirname, 'InvalidPrivateOverride.bx'), `#Class A
+Private Virtual Sub Hidden
+End Sub
+#End Class
+#Class B Extends A
+Override Sub Hidden
+End Sub
+#End Class`, { addGeneratedHeader: false });
+assert(invalidPrivateOverride.diagnostics.some(d => d.severity === 'error' && /Private/.test(d.message)), 'Private Virtual / Override must produce diagnostics');
+
+console.log('B4X++ v0.2 visibility tests OK');
+
+const invalidProtectedExternalAccess = transpileText(path.join(__dirname, 'InvalidProtectedExternalAccess.bx'), `#MainModule Main
+#Class Animal
+Protected Sub GetType As String
+    Return "Animal"
+End Sub
+#End Class
+#Class Dog Extends Animal
+Protected Sub GetType As String
+    Return "Dog"
+End Sub
+#End Class
+Sub AppStart (Args() As String)
+    Dim dogInstance As Dog
+    Dim t As String = dogInstance.GetType()
+End Sub`, { addGeneratedHeader: false });
+assert(invalidProtectedExternalAccess.diagnostics.some(d => d.severity === 'error' && /not accessible/i.test(d.message) && /GetType/.test(d.message)), 'Protected methods must not be callable from main / outside class');
+
+const validProtectedInternalAccess = transpileText(path.join(__dirname, 'ValidProtectedInternalAccess.bx'), `#Class Animal
+Protected Sub GetType As String
+    Return "Animal"
+End Sub
+#End Class
+#Class Dog Extends Animal
+Public Sub Test As String
+    Return GetType
+End Sub
+#End Class`, { addGeneratedHeader: false });
+assert.strictEqual(validProtectedInternalAccess.diagnostics.filter(d => d.severity === 'error').length, 0, 'Protected methods must be accessible inside descendants');
+
+console.log('B4X++ v0.2 member access tests OK');

@@ -22,6 +22,9 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, navigationProvider));
   context.subscriptions.push(vscode.languages.registerDocumentLinkProvider({ language: 'b4xpp' }, navigationProvider));
 
+  const completionProvider = new B4XPPCompletionProvider();
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, completionProvider, '.', ' '));
+
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
     if (doc.languageId === 'b4xpp') validateDocument(doc);
   }));
@@ -116,7 +119,9 @@ function transpileWorkspace(root, config) {
     warningCount,
     errorCount,
     project: result.project || null,
-    usesRuntime: result.usesRuntime === true
+    usesRuntime: result.usesRuntime === true,
+    diagnostics: result.diagnostics || [],
+    programInfo: result.programInfo || null
   };
 }
 
@@ -153,6 +158,8 @@ async function generateBasCommand() {
     fs.writeFileSync(target, out.content, 'utf8');
     written.push(target);
   }
+
+  writeB4XPPMetadata(root, result, outputRoot);
 
   const relOut = path.relative(root, outputRoot).replace(/\\/g, '/');
   const message = `B4X++: ${written.length} .bas file(s) generated in ${relOut}. ${result.errorCount} error(s), ${result.warningCount} warning(s).`;
@@ -233,6 +240,7 @@ async function createIdeProjectCommand() {
   fs.mkdirSync(projectRoot, { recursive: true });
 
   const project = writeIdeProject(projectRoot, platform.value, projectName, packageName, result.outputs, config);
+  writeB4XPPMetadata(root, result, projectRoot);
   const relProject = path.relative(root, project.filePath).replace(/\\/g, '/');
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(project.filePath));
   await vscode.window.showTextDocument(doc);
@@ -298,12 +306,107 @@ async function syncDirectiveProjectCommand() {
     mobileMainModuleName: result.project.mobileMainModuleName || config.mobileMainModuleName
   };
   const project = writeIdeProject(projectRoot, platform, projectName, packageName, result.outputs, projectConfig);
+  writeB4XPPMetadata(root, result, projectRoot);
   const relProject = path.relative(root, project.filePath).replace(/\\/g, '/');
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(project.filePath));
   await vscode.window.showTextDocument(doc);
   vscode.window.showInformationMessage(`B4X++: #Project synchronized: ${relProject}. The .bas files used by the B4X IDE are directly in this folder.`);
 }
 
+
+
+function writeB4XPPMetadata(root, result, targetRoot) {
+  try {
+    const metaRoot = path.join(root, '.b4xpp');
+    fs.mkdirSync(metaRoot, { recursive: true });
+    fs.writeFileSync(path.join(metaRoot, 'symbols.json'), JSON.stringify(buildSymbolsMetadata(root, result), null, 2) + '\n', 'utf8');
+    fs.writeFileSync(path.join(metaRoot, 'sourceMap.json'), JSON.stringify(buildSourceMapMetadata(root, result, targetRoot), null, 2) + '\n', 'utf8');
+  } catch (err) {
+    vscode.window.showWarningMessage(`B4X++: metadata generation failed: ${err.message}`);
+  }
+}
+
+function buildSymbolsMetadata(root, result) {
+  const symbols = [];
+  const programInfo = result && result.programInfo;
+  const rel = (file) => file && !String(file).startsWith('B4X++') ? path.relative(root, file).replace(/\\/g, '/') : file;
+
+  if (programInfo && programInfo.classes) {
+    for (const cls of programInfo.classes.values()) {
+      symbols.push({ kind: 'class', name: cls.name, visibility: 'public', source: rel(cls.sourcePath), line: cls.startLine || 1, extends: cls.extendsName || null, implements: cls.implementsNames || [], modifiers: cls.modifiers || [] });
+      for (const method of cls.methods || []) {
+        symbols.push({ kind: 'method', name: method.name, owner: cls.name, visibility: method.visibility || 'public', modifiers: method.modifiers || [], returnType: method.returnType || '', parameters: (method.params || []).map(p => ({ name: p.name, type: p.type || '' })), source: rel(cls.sourcePath), line: (cls.startLine || 1) + (method.lineIndex || 0) });
+      }
+      for (const prop of collectPropertySymbolsFromLines(cls.lines || [])) {
+        symbols.push({ kind: 'property', owner: cls.name, source: rel(cls.sourcePath), line: (cls.startLine || 1) + prop.lineOffset, ...prop.symbol });
+      }
+    }
+  }
+
+  if (programInfo && programInfo.interfaces) {
+    for (const intf of programInfo.interfaces.values()) {
+      symbols.push({ kind: 'interface', name: intf.name, visibility: 'public', source: rel(intf.sourcePath), line: intf.startLine || 1 });
+      for (const method of intf.methods || []) {
+        symbols.push({ kind: 'interfaceMethod', name: method.name, owner: intf.name, visibility: 'public', returnType: method.returnType || '', parameters: (method.params || []).map(p => ({ name: p.name, type: p.type || '' })), source: rel(intf.sourcePath), line: (intf.startLine || 1) + (method.lineIndex || 0) });
+      }
+    }
+  }
+
+  if (programInfo && programInfo.staticCodes) {
+    for (const mod of programInfo.staticCodes.values()) {
+      symbols.push({ kind: 'staticCode', name: mod.name, visibility: 'public', source: rel(mod.sourcePath), line: mod.startLine || 1 });
+    }
+  }
+
+  return { generatorVersion: B4XPP_GENERATOR_VERSION, generatedAt: new Date().toISOString(), symbols };
+}
+
+function collectPropertySymbolsFromLines(lines) {
+  const out = [];
+  for (let i = 0; i < (lines || []).length; i++) {
+    const raw = splitCodeAndCommentForNavigation(lines[i]).code.trim();
+    const m = raw.match(/^#Property\s+(.+?)\s+As\s+(.+)$/i);
+    if (!m) continue;
+    const tokens = (m[1] || '').trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue;
+    const name = tokens[tokens.length - 1];
+    let visibility = 'public';
+    let mode = '';
+    for (const token of tokens.slice(0, -1)) {
+      const lower = token.toLowerCase();
+      if (['public', 'private', 'protected'].includes(lower)) visibility = lower;
+      if (['readonly', 'writeonly'].includes(lower)) mode = lower;
+    }
+    let type = (m[2] || '').trim();
+    let defaultValue = null;
+    const eq = type.indexOf('=');
+    if (eq >= 0) {
+      defaultValue = type.slice(eq + 1).trim();
+      type = type.slice(0, eq).trim();
+    }
+    out.push({ lineOffset: i, symbol: { name, visibility, mode: mode || 'readwrite', type, defaultValue } });
+  }
+  return out;
+}
+
+function buildSourceMapMetadata(root, result, targetRoot) {
+  const rel = (file) => file && !String(file).startsWith('B4X++') ? path.relative(root, file).replace(/\\/g, '/') : file;
+  const generatedRoot = targetRoot ? path.relative(root, targetRoot).replace(/\\/g, '/') : '';
+  return {
+    generatorVersion: B4XPP_GENERATOR_VERSION,
+    generatedAt: new Date().toISOString(),
+    generatedRoot,
+    outputs: (result.outputs || []).map(out => ({
+      generated: generatedRoot ? `${generatedRoot}/${out.fileName}` : out.fileName,
+      module: out.moduleName,
+      kind: out.kind,
+      source: rel(out.sourcePath),
+      lineOffset: 1,
+      note: 'B4X++ v0.2 keeps a coarse module-level map. Fine-grained line maps are planned for later builds.'
+    })),
+    diagnostics: (result.diagnostics || []).map(d => ({ severity: d.severity, message: d.message, source: rel(d.sourcePath), line: d.line || 1 }))
+  };
+}
 
 function parseGeneratedVersion(content) {
   const text = normalizeNewlines(content || '');
@@ -515,6 +618,7 @@ async function buildB4XLibCommand() {
   }
 
   writeZipStore(entries, libPath);
+  writeB4XPPMetadata(root, result, outDir);
   const rel = path.relative(root, libPath).replace(/\\/g, '/');
   const moduleCount = entries.filter(e => e.name.toLowerCase().endsWith('.bas')).length;
   vscode.window.showInformationMessage(`B4X++: ${libConfig.name}.b4xlib built with ${moduleCount} module(s): ${rel}`);
@@ -1474,6 +1578,117 @@ function publishDiagnostics(diagnosticsByUri) {
 
 
 
+class B4XPPCompletionProvider {
+  provideCompletionItems(document, position) {
+    const index = buildB4XPPSymbolIndex(document);
+    const fileInfo = getFileInfo(index, document.uri.fsPath);
+    const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+    const currentClass = findClassAtPosition(index, fileInfo, position.line);
+
+    if (/\bSuper\.([A-Za-z_][A-Za-z0-9_]*)?$/i.test(linePrefix) && currentClass && currentClass.extendsName) {
+      return completionForClassMembers(index, currentClass.extendsName, { includePrivate: false, includeProtected: true });
+    }
+
+    if (/\b(?:This|Me)\.([A-Za-z_][A-Za-z0-9_]*)?$/i.test(linePrefix) && currentClass) {
+      return completionForClassMembers(index, currentClass.name, { includePrivate: true, includeProtected: true });
+    }
+
+    const receiverMatch = linePrefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$/);
+    if (receiverMatch && fileInfo) {
+      const variables = collectVariablesForScope(index, fileInfo, position.line);
+      const variable = variables.get(receiverMatch[1].toLowerCase());
+      const targetType = variable && (variable.assignedType || variable.type || variable.polyType);
+      if (targetType) return completionForClassOrInterfaceMembers(index, targetType, { includePrivate: false, includeProtected: false });
+    }
+
+    if (/^\s*(?:Public|Private|Protected)?\s*Override\s*$/i.test(linePrefix) && currentClass) {
+      return completionForOverride(index, currentClass);
+    }
+
+    return completionForB4XPPKeywords();
+  }
+}
+
+function completionForB4XPPKeywords() {
+  const keywords = [
+    ['Public', 'Public member visible to generated B4X users.'],
+    ['Protected', 'B4X++ member visible in this class and subclasses; lowered to Private in generated .bas.'],
+    ['Private', 'Private member visible only in the declaring B4X++ class.'],
+    ['Override', 'Override a parent Virtual / Abstract method.'],
+    ['Virtual', 'Mark a method as overridable.'],
+    ['Abstract', 'Declare an abstract method or class.'],
+    ['Final', 'Prevent overriding or inheritance.'],
+    ['Super.', 'Call the parent implementation.'],
+    ['This.', 'Reference current B4X++ instance.'],
+    ['#Class', 'Start a B4X++ class.'],
+    ['#Extends', 'Extend another B4X++ class.'],
+    ['#Property', 'Generate field + getter/setter.'],
+    ['#Interface', 'Start a B4X++ interface.'],
+    ['#Include', 'Include another .bx file.']
+  ];
+  return keywords.map(([label, detail]) => {
+    const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
+    item.detail = detail;
+    return item;
+  });
+}
+
+function completionForOverride(index, currentClass) {
+  const items = [];
+  const seen = new Set();
+  for (const parent of ancestorChain(index, currentClass.name)) {
+    for (const method of parent.methods.values()) {
+      const lname = method.name.toLowerCase();
+      if (seen.has(lname)) continue;
+      seen.add(lname);
+      if (method.visibility === 'private') continue;
+      if ((method.modifiers || []).includes('final')) continue;
+      if (!(method.modifiers || []).some(m => ['virtual', 'abstract', 'override'].includes(m))) continue;
+      const item = new vscode.CompletionItem(method.name, vscode.CompletionItemKind.Method);
+      item.detail = `${parent.name}.${method.name}`;
+      item.insertText = new vscode.SnippetString(`Sub ${method.name}${method.paramsRaw ? '(' + method.paramsRaw + ')' : ''}${method.returnType ? ' As ' + method.returnType : ''}\n\t$0\nEnd Sub`);
+      items.push(item);
+    }
+  }
+  return items;
+}
+
+function completionForClassOrInterfaceMembers(index, typeName, options) {
+  const cls = findClass(index, typeName);
+  if (cls) return completionForClassMembers(index, cls.name, options || {});
+  const intf = findInterface(index, typeName);
+  if (!intf) return [];
+  return Array.from(intf.methods.values()).map(m => methodCompletionItem(m, intf.name));
+}
+
+function completionForClassMembers(index, className, options = {}) {
+  const out = [];
+  const seen = new Set();
+  const cls = findClass(index, className);
+  const chain = cls ? [cls].concat(ancestorChain(index, cls.name)) : [];
+  for (const owner of chain) {
+    for (const method of owner.methods.values()) {
+      const lname = method.name.toLowerCase();
+      if (seen.has(lname)) continue;
+      seen.add(lname);
+      if (method.visibility === 'private' && !options.includePrivate) continue;
+      if (method.visibility === 'protected' && !options.includeProtected) continue;
+      if (['class_globals', 'process_globals'].includes(lname)) continue;
+      out.push(methodCompletionItem(method, owner.name));
+    }
+  }
+  return out;
+}
+
+function methodCompletionItem(method, ownerName) {
+  const item = new vscode.CompletionItem(method.name, vscode.CompletionItemKind.Method);
+  const params = method.paramsRaw ? `(${method.paramsRaw})` : '';
+  item.detail = `${ownerName}.${method.name}${params}${method.returnType ? ' As ' + method.returnType : ''}`;
+  item.insertText = new vscode.SnippetString(`${method.name}${method.paramsRaw ? '(' + method.paramsRaw.split(',').map((_, i) => '${' + (i + 1) + '}').join(', ') + ')' : ''}`);
+  return item;
+}
+
+
 class B4XPPSymbolNavigationProvider {
   provideDefinition(document, position) {
     const includeTarget = getIncludeTargetAt(document, position);
@@ -1709,11 +1924,21 @@ function parseB4XPPSymbolFile(file, text) {
 }
 
 function parseMethodSignatureForNavigation(raw, lineIndex, file, owner) {
-  const m = raw.match(/^\s*((?:(?:Override|Virtual|Protected|Abstract|Final)\s+)*)?(?:(Public|Private)\s+)?Sub\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*(?:As\s+([A-Za-z_][A-Za-z0-9_\.]*))?/i);
+  const m = raw.match(/^\s*((?:(?:Public|Private|Protected|Override|Virtual|Abstract|Final)\s+)*)Sub\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*(?:As\s+([A-Za-z_][A-Za-z0-9_\.]*))?/i);
   if (!m) return null;
-  const name = m[3];
+  const name = m[2];
   const range = makeWordRange(raw, lineIndex, name, m.index);
-  const paramsRaw = m[4] || '';
+  const paramsRaw = m[3] || '';
+  const tokens = (m[1] || '').trim().split(/\s+/).filter(Boolean).map(s => s.toLowerCase());
+  let visibility = '';
+  const modifiers = [];
+  for (const token of tokens) {
+    if (['public', 'private', 'protected'].includes(token)) {
+      if (!visibility) visibility = token;
+    } else if (!modifiers.includes(token)) {
+      modifiers.push(token);
+    }
+  }
   return {
     kind: 'method',
     name,
@@ -1724,10 +1949,10 @@ function parseMethodSignatureForNavigation(raw, lineIndex, file, owner) {
     range,
     ownerKind: owner ? owner.kind : 'module',
     ownerName: owner ? owner.name : path.basename(file, '.bx'),
-    modifiers: (m[1] || '').trim().split(/\s+/).filter(Boolean).map(s => s.toLowerCase()),
-    visibility: (m[2] || '').toLowerCase(),
+    modifiers,
+    visibility,
     paramsRaw,
-    returnType: (m[5] || '').trim()
+    returnType: (m[4] || '').trim()
   };
 }
 
@@ -1902,7 +2127,7 @@ function collectVariablesForScope(index, fileInfo, line) {
 
 function parseVariableDeclarationLine(raw, lineIndex, file, allowDim) {
   const code = splitCodeAndCommentForNavigation(raw).code;
-  const prefix = allowDim ? '(?:Dim|Private|Public)' : '(?:Private|Public)';
+  const prefix = allowDim ? '(?:Dim|Private|Public|Protected)' : '(?:Private|Public|Protected)';
   const re = new RegExp('^\\s*' + prefix + '\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+As\\s+(?:(Poly)\\s+)?([A-Za-z_][A-Za-z0-9_\\.]*)', 'i');
   const m = code.match(re);
   if (!m) return null;

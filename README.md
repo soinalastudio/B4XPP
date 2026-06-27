@@ -14,9 +14,28 @@ Classic B4X modules (.bas)
 B4A / B4J / B4i IDE or .b4xlib package
 ```
 
+### v0.2 visibility diagnostics
+
+B4X++ v0.2 validates visibility before generating B4X code. For example, this is now rejected in VS Code / transpilation:
+
+```vb
+#Class Dog Extends Animal
+Protected Sub GetType As String
+    Return "Dog"
+End Sub
+#End Class
+
+Sub AppStart (Args() As String)
+    Dim dogInstance As Dog
+    Dim t As String = dogInstance.GetType() ' error: GetType is Protected
+End Sub
+```
+
+`Protected` members are visible only inside their declaring class and descendants. The generated `.bas` still lowers `Protected` to B4X-compatible `Private`, so B4X never receives an unsupported `Protected` keyword.
+
 ## Current status
 
-This public preview is version **0.1**. It is an early preview. It is already useful for experimenting with component-style code, but generated output should still be reviewed in the B4X IDE. Designer workflows, layouts, visual forms and final platform settings remain the responsibility of the official B4X IDE.
+This public preview is version **0.2**. It is an early preview. It is already useful for experimenting with component-style code, but generated output should still be reviewed in the B4X IDE. Designer workflows, layouts, visual forms and final platform settings remain the responsibility of the official B4X IDE.
 
 ## Main features
 
@@ -30,6 +49,9 @@ This public preview is version **0.1**. It is an early preview. It is already us
 - Explicit polymorphism through `Poly` variables.
 - Advanced dispatch for B4X++ generated classes, including methods with more than two arguments.
 - `.b4xlib` build command for reusable component libraries.
+- First-class B4X++ visibility modifiers: `Public`, `Protected`, and `Private`.
+- Metadata outputs: `.b4xpp/symbols.json` and `.b4xpp/sourceMap.json`.
+- Basic context-aware completion for visibility keywords, `Super.`, `This.`, members and `Override` candidates.
 
 ## Installation
 
@@ -38,7 +60,7 @@ Install the `.vsix` file from VS Code:
 1. Open **Extensions**.
 2. Click the `...` menu.
 3. Choose **Install from VSIX...**.
-4. Select `b4xpp-vscode-extension-v0.1.0.vsix`.
+4. Select the downloaded `b4xpp-vscode-extension-v0.2.0.vsix` file.
 5. Run **Developer: Reload Window**.
 
 After installation, open a normal project folder, not the extension folder itself, unless you are developing the extension.
@@ -584,3 +606,59 @@ When reading `FieldType: Color` designer properties manually, use `xui.PaintOrCo
 
 - Updated the Designer color diagnostic note. XUI Views normally use `xui.PaintOrColorToColor(Props.Get(...))`, but B4J `.b4xlib` CustomViews can still pass colors as strings such as `0xffffffff`; component authors should use a defensive helper when needed.
 - Packaging checked: VSIX contains `extension/package.json`.
+
+## B4X++ v0.2 visibility rules
+
+B4X official does not support inheritance or `Protected`. B4X++ treats visibility as source-level metadata and lowers it to compiler-friendly B4X during flattening.
+
+```vb
+#Class BaseComponent
+
+Public mBase As B4XView
+Protected mEventName As String
+Private mInternalCacheKey As String
+
+Public Virtual Sub Refresh
+End Sub
+
+Protected Virtual Sub RefreshInternal
+End Sub
+
+Private Sub BuildCacheKey As String
+    Return mInternalCacheKey
+End Sub
+
+#End Class
+```
+
+Generation rules:
+
+| B4X++ visibility | Meaning in `.bx` | Generated `.bas` |
+|---|---|---|
+| `Public` | Visible from outside the class | `Public` |
+| `Protected` | Visible in the class and child classes | `Private` in the flattened final module |
+| `Private` | Visible only in the declaring class | `Private`; inherited private members are renamed during flattening |
+
+`Private Override`, `Private Virtual` and overriding a private parent method are diagnostics in v0.2.
+
+Properties also support visibility:
+
+```vb
+#Property Public Text As String = ""
+#Property Protected AngleDegrees As Double = 0
+#Property Private CacheKey As String = ""
+#Property Public ReadOnly IsRunning As Boolean = False
+```
+
+For component authors this means the public API stays clean while shared parent code can still be reused by child components.
+
+## Metadata files
+
+Every generation command writes metadata under `.b4xpp/`:
+
+```text
+.b4xpp/symbols.json
+.b4xpp/sourceMap.json
+```
+
+`symbols.json` is used by editor tooling and future LSP work. `sourceMap.json` currently stores a module-level mapping from generated `.bas` files back to their `.bx` source files. Fine-grained line mappings are planned for later releases.

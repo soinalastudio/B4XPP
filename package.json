@@ -1,8 +1,8 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.1: edit .bx files, generate B4X modules, sync B4A/B4J/B4i projects, and build .b4xlib components.",
-  "version": "0.1.0",
+  "description": "VS Code extension for B4X++ v0.2: OOP-aware .bx editing, reliable transpilation, symbols/source maps, diagnostics, completion, B4X project sync and .b4xlib builds.",
+  "version": "0.2.0",
   "publisher": "soinala-studio",
   "license": "MIT",
   "engines": {

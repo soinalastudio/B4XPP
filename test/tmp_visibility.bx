@@ -1,0 +1,22 @@
+#MainModule Main
+
+#Class Animal
+#Property Public Name As String = ""
+Protected Sub GetType As String
+    Return "Animal"
+End Sub
+#End Class
+
+#Class Dog Extends Animal Final
+Protected Sub GetType As String
+    Return "Dog"
+End Sub
+Public Sub Bark As String
+    Return Super.Name & " barks"
+End Sub
+#End Class
+
+Sub AppStart (Args() As String)
+    Dim dogInstance As Dog
+    Dim t As String = dogInstance.GetType()
+End Sub
