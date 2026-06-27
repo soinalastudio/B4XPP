@@ -1,0 +1,102 @@
+#Class B4XAnalogClock Extends B4XClockViewBase Final
+
+Sub Class_Globals
+    Private HourHand As B4XClockHourHand
+    Private MinuteHand As B4XClockMinuteHand
+    Private SecondHand As B4XClockSecondHand
+    Private Numbers As List
+    Private TickItems As List
+    Private mObjectsReady As Boolean
+End Sub
+
+Public Sub Initialize(Callback As Object, EventName As String)
+    Super.Initialize(Callback, EventName)
+End Sub
+
+Private Sub EnsureObjects
+    If mObjectsReady = False Then
+        HourHand.Initialize
+        MinuteHand.Initialize
+        SecondHand.Initialize
+
+        Numbers.Initialize
+        For i = 1 To 12
+            Dim n As B4XClockNumber
+            n.Initialize(i)
+            Numbers.Add(n)
+        Next
+
+        TickItems.Initialize
+        For i = 0 To 59
+            Dim t As B4XClockTick
+            t.Initialize(i)
+            TickItems.Add(t)
+        Next
+
+        mObjectsReady = True
+    End If
+End Sub
+
+Override Sub Draw
+    If mBase.IsInitialized = False Then Return
+    If mCanvasReady = False Then PrepareCanvas
+    EnsureObjects
+
+    cvs.ClearRect(cvs.TargetRect)
+
+    Dim side As Float = Min(mBase.Width, mBase.Height)
+    Dim cx As Float = mBase.Width / 2
+    Dim cy As Float = mBase.Height / 2
+    Dim radius As Float = Max(1dip, side / 2 - mPadding * 1dip)
+
+    cvs.DrawCircle(cx, cy, radius, mFaceColor, True, 0)
+    cvs.DrawCircle(cx, cy, radius, mBorderColor, False, 2dip)
+
+    If mShowTicks Then DrawTicks(cx, cy, radius)
+    If mShowNumbers Then DrawNumbers(cx, cy, radius)
+    DrawHands(cx, cy, radius)
+
+    cvs.DrawCircle(cx, cy, 5dip, mCenterColor, True, 0)
+    cvs.Invalidate
+End Sub
+
+Private Sub DrawTicks(CenterX As Float, CenterY As Float, Radius As Float)
+    For i = 0 To TickItems.Size - 1
+        Dim t As B4XClockTick
+        t = TickItems.Get(i)
+        t.Color = mTickColor
+        t.Draw(cvs, CenterX, CenterY, Radius)
+    Next
+End Sub
+
+Private Sub DrawNumbers(CenterX As Float, CenterY As Float, Radius As Float)
+    For i = 0 To Numbers.Size - 1
+        Dim n As B4XClockNumber
+        n = Numbers.Get(i)
+        n.Color = mNumberColor
+        n.FontSize = mNumberSize
+        n.Draw(cvs, CenterX, CenterY, Radius)
+    Next
+End Sub
+
+Private Sub DrawHands(CenterX As Float, CenterY As Float, Radius As Float)
+    Dim h As Int = getCurrentHour
+    Dim m As Int = getCurrentMinute
+    Dim s As Int = getCurrentSecond
+
+    HourHand.Color = mHandColor
+    HourHand.AngleDegrees = B4XClockMath.HourAngle(h, m)
+    HourHand.Draw(cvs, CenterX, CenterY, Radius)
+
+    MinuteHand.Color = mHandColor
+    MinuteHand.AngleDegrees = B4XClockMath.MinuteAngle(m, s)
+    MinuteHand.Draw(cvs, CenterX, CenterY, Radius)
+
+    If mShowSecondHand Then
+        SecondHand.Color = mSecondHandColor
+        SecondHand.AngleDegrees = B4XClockMath.SecondAngle(s)
+        SecondHand.Draw(cvs, CenterX, CenterY, Radius)
+    End If
+End Sub
+
+#End Class

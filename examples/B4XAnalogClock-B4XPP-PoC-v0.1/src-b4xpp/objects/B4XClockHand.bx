@@ -1,0 +1,32 @@
+#Class B4XClockHand Extends B4XClockDrawableBase
+
+#Property AngleDegrees As Float = 0
+#Property LengthRatio As Float = 0.70
+#Property TailRatio As Float = 0.08
+#Property HandWidth As Float = 3
+
+Sub Class_Globals
+    Private mKind As String
+End Sub
+
+Public Sub Initialize(Kind As String)
+    Super.Initialize
+    mKind = Kind
+End Sub
+
+Override Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radius As Float)
+    If mVisible = False Then Return
+    Dim r1 As Float = Radius * mLengthRatio
+    Dim r2 As Float = Radius * mTailRatio
+    Dim x1 As Float = B4XClockMath.PointX(CenterX, r1, mAngleDegrees)
+    Dim y1 As Float = B4XClockMath.PointY(CenterY, r1, mAngleDegrees)
+    Dim x2 As Float = B4XClockMath.PointX(CenterX, -r2, mAngleDegrees)
+    Dim y2 As Float = B4XClockMath.PointY(CenterY, -r2, mAngleDegrees)
+    Canvas.DrawLine(x2, y2, x1, y1, mColor, mHandWidth)
+End Sub
+
+Public Sub getKind As String
+    Return mKind
+End Sub
+
+#End Class

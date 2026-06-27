@@ -1,0 +1,33 @@
+#StaticCode B4XClockMath
+
+Sub Process_Globals
+End Sub
+
+Public Sub PointX(CenterX As Float, Radius As Float, AngleDegrees As Float) As Float
+    Return CenterX + Radius * SinD(AngleDegrees)
+End Sub
+
+Public Sub PointY(CenterY As Float, Radius As Float, AngleDegrees As Float) As Float
+    Return CenterY - Radius * CosD(AngleDegrees)
+End Sub
+
+Public Sub HourAngle(Hour As Int, Minute As Int) As Float
+    Dim h As Int = Hour Mod 12
+    Return h * 30 + Minute * 0.5
+End Sub
+
+Public Sub MinuteAngle(Minute As Int, Second As Int) As Float
+    Return Minute * 6 + Second * 0.1
+End Sub
+
+Public Sub SecondAngle(Second As Int) As Float
+    Return Second * 6
+End Sub
+
+Public Sub Clamp(Value As Float, Minimum As Float, Maximum As Float) As Float
+    If Value < Minimum Then Return Minimum
+    If Value > Maximum Then Return Maximum
+    Return Value
+End Sub
+
+#End StaticCode

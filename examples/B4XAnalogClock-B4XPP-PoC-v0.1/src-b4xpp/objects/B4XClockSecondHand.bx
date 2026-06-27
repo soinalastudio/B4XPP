@@ -1,0 +1,10 @@
+#Class B4XClockSecondHand Extends B4XClockHand Final
+
+#Constructor
+    Super.Initialize("second")
+    mLengthRatio = 0.75
+    mTailRatio = 0.12
+    mHandWidth = 1dip
+#End Constructor
+
+#End Class

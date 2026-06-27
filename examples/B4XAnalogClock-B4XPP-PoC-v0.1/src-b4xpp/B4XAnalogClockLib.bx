@@ -1,0 +1,18 @@
+#B4XLib B4XAnalogClock
+#Version 0.21
+#Author B4X++ Team
+#B4XLibDir b4x-libs
+#SupportedPlatforms B4A, B4J
+#B4ADependsOn XUI
+#B4JDependsOn jXUI
+
+#Include "core/B4XClockMath.bx"
+#Include "core/B4XClockDrawableBase.bx"
+#Include "core/B4XClockViewBase.bx"
+#Include "objects/B4XClockHand.bx"
+#Include "objects/B4XClockHourHand.bx"
+#Include "objects/B4XClockMinuteHand.bx"
+#Include "objects/B4XClockSecondHand.bx"
+#Include "objects/B4XClockNumber.bx"
+#Include "objects/B4XClockTick.bx"
+#Include "B4XAnalogClock.bx"

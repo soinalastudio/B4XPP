@@ -1,0 +1,205 @@
+#Class B4XClockViewBase Abstract
+
+#Event: Click (Tag As Object)
+#DesignerProperty: Key: AutoStart, DisplayName: Auto Start, FieldType: Boolean, DefaultValue: True, Description: Start the clock automatically when the view is created.
+#DesignerProperty: Key: FaceColor, DisplayName: Face Color, FieldType: Color, DefaultValue: 0xFFFFFFFF, Description: Clock face color.
+#DesignerProperty: Key: BorderColor, DisplayName: Border Color, FieldType: Color, DefaultValue: 0xFF1F2937, Description: Clock border color.
+#DesignerProperty: Key: HandColor, DisplayName: Hand Color, FieldType: Color, DefaultValue: 0xFF111827, Description: Hour and minute hand color.
+#DesignerProperty: Key: SecondHandColor, DisplayName: Second Hand Color, FieldType: Color, DefaultValue: 0xFFE11D48, Description: Second hand color.
+#DesignerProperty: Key: TickColor, DisplayName: Tick Color, FieldType: Color, DefaultValue: 0xFF374151, Description: Tick mark color.
+#DesignerProperty: Key: NumberColor, DisplayName: Number Color, FieldType: Color, DefaultValue: 0xFF111827, Description: Number color.
+#DesignerProperty: Key: CenterColor, DisplayName: Center Color, FieldType: Color, DefaultValue: 0xFF111827, Description: Center circle color.
+#DesignerProperty: Key: Padding, DisplayName: Padding, FieldType: Int, DefaultValue: 8, Description: Inner padding in dips.
+#DesignerProperty: Key: NumberSize, DisplayName: Number Size, FieldType: Int, DefaultValue: 16, Description: Number text size.
+#DesignerProperty: Key: ShowNumbers, DisplayName: Show Numbers, FieldType: Boolean, DefaultValue: True, Description: Show numbers from 1 to 12.
+#DesignerProperty: Key: ShowTicks, DisplayName: Show Ticks, FieldType: Boolean, DefaultValue: True, Description: Show minute tick marks.
+#DesignerProperty: Key: ShowSecondHand, DisplayName: Show Second Hand, FieldType: Boolean, DefaultValue: True, Description: Show the second hand.
+
+#Property AutoStart As Boolean = True
+#Property FaceColor As Int = 0xFFFFFFFF
+#Property BorderColor As Int = 0xFF1F2937
+#Property HandColor As Int = 0xFF111827
+#Property SecondHandColor As Int = 0xFFE11D48
+#Property TickColor As Int = 0xFF374151
+#Property NumberColor As Int = 0xFF111827
+#Property CenterColor As Int = 0xFF111827
+#Property Padding As Int = 8
+#Property NumberSize As Int = 16
+#Property ShowNumbers As Boolean = True
+#Property ShowTicks As Boolean = True
+#Property ShowSecondHand As Boolean = True
+
+Sub Class_Globals
+    Private xui As XUI
+    Public mBase As B4XView 'ignore
+    Public Tag As Object
+    Private mCallBack As Object
+    Private mEventName As String
+    Private cvs As B4XCanvas
+    Private mCanvasReady As Boolean
+    Private tmr As Timer
+    Private mManualHour As Int
+    Private mManualMinute As Int
+    Private mManualSecond As Int
+    Private mUseSystemTime As Boolean = True
+End Sub
+
+Public Sub Initialize(Callback As Object, EventName As String)
+    mCallBack = Callback
+    mEventName = EventName
+    tmr.Initialize("tmr", 1000)
+End Sub
+
+Public Sub DesignerCreateView(Base As Object, Lbl As Label, Props As Map)
+    mBase = Base
+    Tag = mBase.Tag
+    mBase.Tag = Me
+    ReadDesignerProps(Props)
+    PrepareCanvas
+    Draw
+    If mAutoStart Then Start
+End Sub
+
+Public Sub AddToParent(Parent As B4XView, Left As Int, Top As Int, Width As Int, Height As Int) As B4XView
+    mBase = xui.CreatePanel("mBase")
+    mBase.Tag = Me
+    Parent.AddView(mBase, Left, Top, Width, Height)
+    PrepareCanvas
+    Draw
+    If mAutoStart Then Start
+    Return mBase
+End Sub
+
+Public Sub Base_Resize(Width As Double, Height As Double)
+    If mBase.IsInitialized = False Then Return
+    If mCanvasReady Then cvs.Resize(Width, Height)
+    Draw
+End Sub
+
+Private Sub mBase_Resize(Width As Double, Height As Double)
+    Base_Resize(Width, Height)
+End Sub
+
+Private Sub mBase_Click
+    If xui.SubExists(mCallBack, mEventName & "_Click", 1) Then CallSub2(mCallBack, mEventName & "_Click", Tag)
+End Sub
+
+Private Sub tmr_Tick
+    If mUseSystemTime Then Draw
+End Sub
+
+Private Sub ReadDesignerProps(Props As Map)
+    If Props.IsInitialized = False Then Return
+    mAutoStart = Props.GetDefault("AutoStart", mAutoStart)
+
+    ' XUI Views usually read designer colors with xui.PaintOrColorToColor(Props.Get(...)).
+    ' B4J can still pass colors as text such as "0xffffffff" in some .b4xlib custom views.
+    ' This helper accepts all common designer formats: Int, Paint, "0xAARRGGBB" and "#AARRGGBB".
+    mFaceColor = DesignerColor(Props, "FaceColor", mFaceColor)
+    mBorderColor = DesignerColor(Props, "BorderColor", mBorderColor)
+    mHandColor = DesignerColor(Props, "HandColor", mHandColor)
+    mSecondHandColor = DesignerColor(Props, "SecondHandColor", mSecondHandColor)
+    mTickColor = DesignerColor(Props, "TickColor", mTickColor)
+    mNumberColor = DesignerColor(Props, "NumberColor", mNumberColor)
+    mCenterColor = DesignerColor(Props, "CenterColor", mCenterColor)
+
+    mPadding = Props.GetDefault("Padding", mPadding)
+    mNumberSize = Props.GetDefault("NumberSize", mNumberSize)
+    mShowNumbers = Props.GetDefault("ShowNumbers", mShowNumbers)
+    mShowTicks = Props.GetDefault("ShowTicks", mShowTicks)
+    mShowSecondHand = Props.GetDefault("ShowSecondHand", mShowSecondHand)
+End Sub
+
+Private Sub DesignerColor(Props As Map, Key As String, DefaultColor As Int) As Int
+    Dim RawValue As Object = Props.GetDefault(Key, DefaultColor)
+    If RawValue Is String Then
+        Return ParseDesignerColorString(RawValue, DefaultColor)
+    End If
+    Return xui.PaintOrColorToColor(RawValue)
+End Sub
+
+Private Sub ParseDesignerColorString(ValueText As String, DefaultColor As Int) As Int
+    If ValueText = Null Then Return DefaultColor
+    Dim HexText As String = ValueText.Trim
+    If HexText.Length = 0 Then Return DefaultColor
+
+    If HexText.StartsWith("#") Then HexText = HexText.SubString(1)
+    If HexText.ToLowerCase.StartsWith("0x") Then HexText = HexText.SubString(2)
+
+    If HexText.Length = 6 Then
+        Dim r As Int = Bit.ParseInt(HexText.SubString2(0, 2), 16)
+        Dim g As Int = Bit.ParseInt(HexText.SubString2(2, 4), 16)
+        Dim b As Int = Bit.ParseInt(HexText.SubString2(4, 6), 16)
+        Return xui.Color_RGB(r, g, b)
+    Else If HexText.Length = 8 Then
+        Dim a As Int = Bit.ParseInt(HexText.SubString2(0, 2), 16)
+        Dim r As Int = Bit.ParseInt(HexText.SubString2(2, 4), 16)
+        Dim g As Int = Bit.ParseInt(HexText.SubString2(4, 6), 16)
+        Dim b As Int = Bit.ParseInt(HexText.SubString2(6, 8), 16)
+        Return MakeARGB(a, r, g, b)
+    End If
+
+    Return DefaultColor
+End Sub
+
+Private Sub MakeARGB(Alpha As Int, Red As Int, Green As Int, Blue As Int) As Int
+    Return Bit.Or(Bit.ShiftLeft(Alpha, 24), Bit.Or(Bit.ShiftLeft(Red, 16), Bit.Or(Bit.ShiftLeft(Green, 8), Blue)))
+End Sub
+
+Private Sub PrepareCanvas
+    If mBase.IsInitialized = False Then Return
+    cvs.Initialize(mBase)
+    mCanvasReady = True
+End Sub
+
+Public Sub Start
+    mUseSystemTime = True
+    If tmr.IsInitialized = False Then tmr.Initialize("tmr", 1000)
+    tmr.Enabled = True
+    Draw
+End Sub
+
+Public Sub Stop
+    If tmr.IsInitialized Then tmr.Enabled = False
+End Sub
+
+Public Sub SetTime(Hour As Int, Minute As Int, Second As Int)
+    mUseSystemTime = False
+    mManualHour = Hour
+    mManualMinute = Minute
+    mManualSecond = Second
+    Draw
+End Sub
+
+Public Sub SetTimeTicks(TimeTicks As Long)
+    mUseSystemTime = False
+    mManualHour = DateTime.GetHour(TimeTicks)
+    mManualMinute = DateTime.GetMinute(TimeTicks)
+    mManualSecond = DateTime.GetSecond(TimeTicks)
+    Draw
+End Sub
+
+Public Sub UseSystemTime
+    mUseSystemTime = True
+    Draw
+End Sub
+
+Public Sub getCurrentHour As Int
+    If mUseSystemTime Then Return DateTime.GetHour(DateTime.Now)
+    Return mManualHour
+End Sub
+
+Public Sub getCurrentMinute As Int
+    If mUseSystemTime Then Return DateTime.GetMinute(DateTime.Now)
+    Return mManualMinute
+End Sub
+
+Public Sub getCurrentSecond As Int
+    If mUseSystemTime Then Return DateTime.GetSecond(DateTime.Now)
+    Return mManualSecond
+End Sub
+
+Virtual Sub Draw
+End Sub
+
+#End Class
