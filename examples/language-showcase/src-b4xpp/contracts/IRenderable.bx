@@ -1,0 +1,3 @@
+#Interface IRenderable
+Sub Render(Theme As String, Scale As Int, Debug As Boolean) As String
+#End Interface

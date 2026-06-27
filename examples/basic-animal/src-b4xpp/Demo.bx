@@ -1,0 +1,48 @@
+#Project B4J-NonUI AnimalDemo
+#Package b4xpp.examples.animals
+#ProjectDir b4x-ide-projects/AnimalDemo-b4j-nonui
+#MainModule Main
+
+#B4XLib AnimalComponents
+#Version 1.00
+#Author B4X++ Team
+#B4XLibDir b4x-libs
+#SupportedPlatforms B4A, B4J, B4i
+
+#Include "contracts/IAnimal.bx"
+#Include "models/Animal.bx"
+#Include "models/Dog.bx"
+#Include "models/Cat.bx"
+#Include "models/Bird.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Dim dogInstance As Dog
+    dogInstance.Initialize("Rex")
+
+    Dim catInstance As Cat
+    catInstance.Initialize("Misty")
+
+    Dim birdInstance As Bird
+    birdInstance.Initialize("Tweety")
+
+    Log(dogInstance.Speak)
+    Log(catInstance.Speak)
+    Log(birdInstance.Speak)
+
+    ' Natural polymorphism: Dog / Cat / Bird extend Animal.
+    ' B4X++ detects the child assignments and generates Object + dynamic dispatch.
+    Dim animalInstance As Animal
+
+    animalInstance = dogInstance
+    Log(animalInstance.Speak)
+    Log(animalInstance.Move(3))
+
+    animalInstance = catInstance
+    Log(animalInstance.Speak)
+
+    animalInstance = birdInstance
+    Log(animalInstance.Move(10))
+End Sub

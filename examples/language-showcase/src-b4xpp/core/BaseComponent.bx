@@ -1,0 +1,34 @@
+#Class BaseComponent Abstract Implements IRenderable, IIdentifiable
+
+#DesignerProperty: Key: Title, DisplayName: Title, FieldType: String, DefaultValue: Untitled, Description: Component title
+#Event: Click
+
+#Property ReadOnly Id As String
+#Property Title As String = "Untitled"
+#Property ReadOnly CreatedAt As Long = 0
+
+#Constructor(Id As String, Title As String)
+    mId = Id
+    mTitle = Title
+    mCreatedAt = DateTime.Now
+#End Constructor
+
+Virtual Sub Identity As String
+    Return mId
+End Sub
+
+Abstract Sub ComponentType As String
+
+Virtual Sub Render(Theme As String, Scale As Int, Debug As Boolean) As String
+    Return BuildRenderLine("base", Theme, Scale, Debug)
+End Sub
+
+Protected Sub BuildRenderLine(Kind As String, Theme As String, Scale As Int, Debug As Boolean) As String
+    Return Kind & ":" & mId & " title=" & mTitle & " theme=" & Theme & " scale=" & Scale & " debug=" & Debug
+End Sub
+
+Final Sub Signature As String
+    Return mId & "-" & mCreatedAt
+End Sub
+
+#End Class

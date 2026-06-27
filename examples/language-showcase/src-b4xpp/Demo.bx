@@ -1,0 +1,46 @@
+#Project B4J-NonUI B4XPPShowcase
+#Package b4xpp.examples.showcase
+#ProjectDir b4x-ide-projects/B4XPPShowcase-b4j-nonui
+#MainModule Main
+
+#B4XLib B4XPPShowcaseComponents
+#Version 1.00
+#Author B4X++ Team
+#B4XLibDir b4x-libs
+#SupportedPlatforms B4A, B4J, B4i
+#DependsOn XUI
+#B4JDependsOn jXUI
+#B4ADependsOn XUI
+#B4iDependsOn iXUI
+#LibraryFilesDir src-b4xpp/Files
+
+#Include "contracts/IRenderable.bx"
+#Include "contracts/IIdentifiable.bx"
+#Include "core/BaseComponent.bx"
+#Include "components/ButtonComponent.bx"
+#Include "components/LabelComponent.bx"
+#Include "services/ComponentRegistry.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Dim button As ButtonComponent
+    button.Initialize("save", "Save")
+    button.Enabled = True
+
+    Dim label As LabelComponent
+    label.Initialize("title", "Welcome")
+    label.Text = "B4X++ language showcase"
+
+    Dim renderable As Poly IRenderable
+    renderable = button
+    Log(renderable.Render("dark", 2, True))
+
+    renderable = label
+    Log(renderable.Render("light", 1, False))
+
+    Dim registry As ComponentRegistry
+    registry.Initialize
+    Log(registry.Store(button))
+End Sub

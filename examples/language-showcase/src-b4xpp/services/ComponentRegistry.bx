@@ -1,0 +1,15 @@
+#Class ComponentRegistry
+
+#Property WriteOnly LastRendered As String = ""
+
+#Constructor
+#End Constructor
+
+Virtual Sub Store(Component As Object) As String
+    Dim renderable As Poly IRenderable
+    renderable = Component
+    mLastRendered = renderable.Render("registry", 1, False)
+    Return mLastRendered
+End Sub
+
+#End Class

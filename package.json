@@ -1,0 +1,134 @@
+{
+  "name": "b4xpp",
+  "displayName": "B4X++",
+  "description": "VS Code extension for B4X++ v0.1: edit .bx files, generate B4X modules, sync B4A/B4J/B4i projects, and build .b4xlib components.",
+  "version": "0.1.0",
+  "publisher": "soinala-studio",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "b4xpp",
+        "aliases": [
+          "B4X++",
+          "b4xpp"
+        ],
+        "extensions": [
+          ".bx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "b4xpp",
+        "scopeName": "source.b4xpp",
+        "path": "./syntaxes/b4xpp.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "b4xpp",
+        "path": "./snippets/b4xpp.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "b4xpp.generateBas",
+        "title": "B4X++: Generate .bas Files",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.createExample",
+        "title": "B4X++: Create Example Project",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.showGeneratedFolder",
+        "title": "B4X++: Open Generated Folder",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.createIdeProject",
+        "title": "B4X++: Create B4A/B4J/B4i Project",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.syncDirectiveProject",
+        "title": "B4X++: Sync #Project",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.buildB4XLib",
+        "title": "B4X++: Build .b4xlib",
+        "category": "B4X++"
+      }
+    ],
+    "configuration": {
+      "title": "B4X++",
+      "properties": {
+        "b4xpp.sourceDir": {
+          "type": "string",
+          "default": "src-b4xpp",
+          "description": "Folder containing B4X++ source files (.bx)."
+        },
+        "b4xpp.outputDir": {
+          "type": "string",
+          "default": "generated-b4x",
+          "description": "Output folder for generated classic B4X files (.bas)."
+        },
+        "b4xpp.mainModuleName": {
+          "type": "string",
+          "default": "",
+          "description": "Main module name when no #MainModule directive is found. Leave empty to avoid generating an implicit main module."
+        },
+        "b4xpp.addGeneratedHeader": {
+          "type": "boolean",
+          "default": true,
+          "description": "Add an AUTO-GENERATED header to generated .bas files."
+        },
+        "b4xpp.overwriteGeneratedFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Overwrite existing generated .bas files."
+        },
+        "b4xpp.includeTimestamp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Add a generation timestamp to the header. Disabled by default to avoid noisy diffs."
+        },
+        "b4xpp.projectDir": {
+          "type": "string",
+          "default": "b4x-ide-projects",
+          "description": "Output folder for generated B4A/B4J/B4i projects."
+        },
+        "b4xpp.packageName": {
+          "type": "string",
+          "default": "b4xpp.example",
+          "description": "Package / application id used in generated B4X project files."
+        },
+        "b4xpp.mobileMainModuleName": {
+          "type": "string",
+          "default": "B4XPPMain",
+          "description": "Code module name used to host the B4X++ #MainModule in B4A/B4i projects, avoiding conflicts with the native Main module."
+        },
+        "b4xpp.b4xlibDir": {
+          "type": "string",
+          "default": "b4x-libs",
+          "description": "Output folder for generated .b4xlib files."
+        }
+      }
+    }
+  }
+}

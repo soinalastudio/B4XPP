@@ -1,0 +1,15 @@
+#Class Cat Extends Animal Final
+
+#Constructor(Name As String)
+    Super.Initialize(Name)
+#End Constructor
+
+Override Sub Speak As String
+    Return Super.Name & " says meow"
+End Sub
+
+Override Sub Move(Distance As Int) As String
+    Return Super.Name & " silently walks " & Distance & " m"
+End Sub
+
+#End Class

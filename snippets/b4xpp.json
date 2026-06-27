@@ -1,0 +1,269 @@
+{
+  "B4X++ Project B4J Non-UI": {
+    "prefix": "project-b4j",
+    "body": [
+      "#Project B4J-NonUI ${1:DemoProject}",
+      "#Package ${2:b4xpp.demo}",
+      "#ProjectDir b4x-ide-projects/${1:DemoProject}-b4j-nonui",
+      "#MainModule Main",
+      ""
+    ],
+    "description": "B4J Non-UI project directives"
+  },
+  "B4X++ Project B4J UI": {
+    "prefix": "project-b4j-ui",
+    "body": [
+      "#Project B4J-UI ${1:DemoProject}",
+      "#Package ${2:b4xpp.demo}",
+      "#ProjectDir b4x-ide-projects/${1:DemoProject}-b4j-ui",
+      "#MainModule Main",
+      ""
+    ],
+    "description": "B4J UI project directives"
+  },
+  "B4X++ Project B4A": {
+    "prefix": "project-b4a",
+    "body": [
+      "#Project B4A ${1:DemoProject}",
+      "#Package ${2:b4xpp.demo}",
+      "#ProjectDir b4x-ide-projects/${1:DemoProject}-b4a",
+      "#MainModule Main",
+      ""
+    ],
+    "description": "B4A project directives"
+  },
+  "B4X++ Project B4i": {
+    "prefix": "project-b4i",
+    "body": [
+      "#Project B4i ${1:DemoProject}",
+      "#Package ${2:b4xpp.demo}",
+      "#ProjectDir b4x-ide-projects/${1:DemoProject}-b4i",
+      "#MainModule Main",
+      ""
+    ],
+    "description": "B4i project directives"
+  },
+  "B4X++ Include": {
+    "prefix": "include",
+    "body": [
+      "#Include \"${1:models/MyClass.bx}\""
+    ],
+    "description": "Include another .bx file"
+  },
+  "B4X++ Interface": {
+    "prefix": "interface",
+    "body": [
+      "#Interface ${1:IMyContract}",
+      "Sub ${2:DoWork}(${3})${4: As Object}",
+      "#End Interface"
+    ],
+    "description": "Declare a B4X++ interface contract"
+  },
+  "B4X++ Class": {
+    "prefix": "class",
+    "body": [
+      "#Class ${1:MyClass}",
+      "",
+      "#Property ${2:Name} As ${3:String}",
+      "",
+      "#Constructor(${2:Name} As ${3:String})",
+      "\tm${2:Name} = ${2:Name}",
+      "#End Constructor",
+      "",
+      "#End Class"
+    ],
+    "description": "Create a B4X++ class"
+  },
+  "B4X++ Class Extends": {
+    "prefix": "extends",
+    "body": [
+      "#Class ${1:ChildClass} Extends ${2:BaseClass}",
+      "",
+      "#Constructor(${3})",
+      "\tSuper.Initialize(${4})",
+      "#End Constructor",
+      "",
+      "Override Sub ${5:MethodName}(${6})${7: As String}",
+      "\t${8:' TODO}",
+      "End Sub",
+      "",
+      "#End Class"
+    ],
+    "description": "Create a class with #Extends"
+  },
+  "B4X++ Class Implements": {
+    "prefix": "implements",
+    "body": [
+      "#Class ${1:MyClass} Implements ${2:IMyContract}",
+      "",
+      "#Constructor(${3})",
+      "\t${4:' TODO}",
+      "#End Constructor",
+      "",
+      "#End Class"
+    ],
+    "description": "Create a class with #Implements"
+  },
+  "B4X++ MainModule": {
+    "prefix": "main",
+    "body": [
+      "#MainModule ${1:Main}",
+      "",
+      "Sub Process_Globals",
+      "End Sub",
+      "",
+      "Sub AppStart (Args() As String)",
+      "\tLog(\"Hello B4X++\")",
+      "End Sub"
+    ],
+    "description": "Create a B4X++ main module"
+  },
+  "B4X++ Poly variable": {
+    "prefix": "poly",
+    "body": [
+      "Dim ${1:item} As Poly ${2:BaseOrInterface}",
+      "${1:item} = ${3:childInstance}",
+      "Log(${1:item}.${4:VirtualMethod}(${5}))"
+    ],
+    "description": "Explicit B4X++ polymorphic declaration"
+  },
+  "B4X++ Natural polymorphism": {
+    "prefix": "poly-natural",
+    "body": [
+      "Dim ${1:item} As ${2:BaseClass}",
+      "${1:item} = ${3:childInstance}",
+      "Log(${1:item}.${4:VirtualMethod}(${5}))"
+    ],
+    "description": "Natural B4X++ polymorphism. Generated as Object + dynamic dispatch when the assigned class extends the declared base class."
+  },
+  "B4X++ Property": {
+    "prefix": "property",
+    "body": [
+      "#Property ${1:Name} As ${2:String}"
+    ],
+    "description": "Generate a B4X get/set property"
+  },
+  "B4X++ ReadOnly Property": {
+    "prefix": "property-ro",
+    "body": [
+      "#Property ReadOnly ${1:Name} As ${2:String}"
+    ],
+    "description": "Generate a B4X getter-only property"
+  },
+  "B4X++ WriteOnly Property": {
+    "prefix": "property-wo",
+    "body": [
+      "#Property WriteOnly ${1:Name} As ${2:String}"
+    ],
+    "description": "Generate a B4X setter-only property"
+  },
+  "B4X++ Constructor": {
+    "prefix": "constructor",
+    "body": [
+      "#Constructor(${1})",
+      "\t${2:' TODO}",
+      "#End Constructor"
+    ],
+    "description": "Generate Public Sub Initialize(...)"
+  },
+  "Override Sub": {
+    "prefix": "override",
+    "body": [
+      "Override Sub ${1:MethodName}(${2})${3: As String}",
+      "\t${4:' TODO}",
+      "End Sub"
+    ],
+    "description": "B4X++ Override method"
+  },
+  "Virtual Sub": {
+    "prefix": "virtual",
+    "body": [
+      "Virtual Sub ${1:MethodName}(${2})${3: As String}",
+      "\t${4:' TODO}",
+      "End Sub"
+    ],
+    "description": "B4X++ Virtual method"
+  },
+  "Protected Sub": {
+    "prefix": "protected",
+    "body": [
+      "Protected Sub ${1:MethodName}(${2})",
+      "\t${3:' TODO}",
+      "End Sub"
+    ],
+    "description": "B4X++ Protected method"
+  },
+  "Abstract Sub": {
+    "prefix": "abstract",
+    "body": [
+      "Abstract Sub ${1:MethodName}(${2})${3: As String}"
+    ],
+    "description": "B4X++ abstract method declaration"
+  },
+  "Final Sub": {
+    "prefix": "final",
+    "body": [
+      "Final Sub ${1:MethodName}(${2})${3: As String}",
+      "\t${4:' TODO}",
+      "End Sub"
+    ],
+    "description": "B4X++ Final method"
+  },
+  "B4X++ B4XLib": {
+    "prefix": "b4xlib",
+    "body": [
+      "#B4XLib ${1:MyComponents}",
+      "#Version ${2:1.00}",
+      "#Author ${3:Your Name}",
+      "#B4XLibDir b4x-libs",
+      "#SupportedPlatforms B4A, B4J, B4i",
+      "${4:#DependsOn XUI}",
+      ""
+    ],
+    "description": "B4X library packaging directives"
+  },
+  "B4X++ Full Header": {
+    "prefix": "b4xpp-header",
+    "body": [
+      "#Project ${1:B4J-NonUI} ${2:MyProject}",
+      "#Package ${3:b4xpp.myproject}",
+      "#ProjectDir b4x-ide-projects/${2:MyProject}",
+      "#MainModule Main",
+      "",
+      "#B4XLib ${4:MyComponents}",
+      "#Version ${5:1.00}",
+      "#Author ${6:Your Name}",
+      "#B4XLibDir b4x-libs",
+      "#SupportedPlatforms B4A, B4J, B4i",
+      ""
+    ],
+    "description": "Common project + .b4xlib header"
+  },
+  "B4X++ Property with Default": {
+    "prefix": "property-default",
+    "body": [
+      "#Property ${1:Name} As ${2:String} = ${3:\"Default\"}"
+    ],
+    "description": "Generate a B4X get/set property with an initial value"
+  },
+  "B4X++ ReadOnly Property with Default": {
+    "prefix": "property-ro-default",
+    "body": [
+      "#Property ReadOnly ${1:Name} As ${2:String} = ${3:\"Default\"}"
+    ],
+    "description": "Generate a getter-only property with an initial value"
+  },
+  "staticcode": {
+    "prefix": "staticcode",
+    "body": [
+      "#StaticCode ${1:ModuleName}",
+      "",
+      "Sub Process_Globals",
+      "\t$0",
+      "End Sub",
+      "",
+      "#End StaticCode"
+    ],
+    "description": "B4X++ static code module"
+  }
+}

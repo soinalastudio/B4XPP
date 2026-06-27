@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "B4X++",
+  "scopeName": "source.b4xpp",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#directives"
+    },
+    {
+      "include": "#oopModifiers"
+    },
+    {
+      "include": "#b4xKeywords"
+    },
+    {
+      "include": "#numbers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.apostrophe.b4xpp",
+          "match": "'.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.b4xpp",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.b4xpp",
+              "match": "\"\""
+            }
+          ]
+        }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.b4xpp",
+          "match": "(?i)^\\s*#(?:Project|Package|ProjectDir|MobileMain|B4XLib|B4XLibDir|LibraryFilesDir|Version|Author|DependsOn|B4ADependsOn|B4JDependsOn|B4iDependsOn|SupportedPlatforms|ShortName|Include|Interface|End\\s+Interface|Class|End\\s+Class|MainModule|Extends|Implements|Abstract|Final|Constructor|End\\s+Constructor|Property|Region|End\\s+Region|If|Else|End\\s+If|IgnoreWarnings|DesignerProperty|Event|RaisesSynchronousEvents|AdditionalJar|AdditionalLib|BridgeLogger|CustomBuildAction|DebuggerForceStandardAssets|DebuggerForceFullDeployment|ExcludedLib|LibraryAuthor|LibraryName|LibraryVersion|Macro|MacroAfter|MacroEnd|MergeLibraries|ModuleVisibility|PackagerProperty|SupportedOrientations|VersionCode|VersionName)\\b"
+        }
+      ]
+    },
+    "oopModifiers": {
+      "patterns": [
+        {
+          "name": "storage.modifier.oop.b4xpp",
+          "match": "(?i)\\b(?:Override|Virtual|Protected|Abstract|Final|Poly|Super|This|ReadOnly|WriteOnly)\\b"
+        }
+      ]
+    },
+    "b4xKeywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.b4xpp",
+          "match": "(?i)\\b(?:Sub|End\\s+Sub|If|Then|Else|End\\s+If|For|Each|Next|Do|Loop|While|Wend|Select|Case|End\\s+Select|Try|Catch|End\\s+Try|Return|Exit|Continue|Wait\\s+For|CallSub|CallSubDelayed|Sleep|As|Is|And|Or|Not|True|False|Null|Dim|Private|Public|Type|Map|List)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.b4xpp",
+          "match": "\\b(?:0x[0-9A-Fa-f]+|\\d+(?:\\.\\d+)?)\\b"
+        }
+      ]
+    }
+  }
+}
