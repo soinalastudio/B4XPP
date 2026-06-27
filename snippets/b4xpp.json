@@ -265,5 +265,39 @@
       "#End StaticCode"
     ],
     "description": "B4X++ static code module"
+  },
+  "custom-getter": {
+    "prefix": "getter",
+    "body": [
+      "${1|Public,Protected,Private|} Get ${2:PropertyName} As ${3:String}",
+      "\tReturn m${2:PropertyName}",
+      "End Get"
+    ],
+    "description": "Create a B4X++ custom property getter"
+  },
+  "custom-setter": {
+    "prefix": "setter",
+    "body": [
+      "${1|Public,Protected,Private|} Set ${2:PropertyName}(${3:Value} As ${4:String})",
+      "\tm${2:PropertyName} = ${3:Value}",
+      "End Set"
+    ],
+    "description": "Create a B4X++ custom property setter"
+  },
+  "custom-property": {
+    "prefix": "property-custom",
+    "body": [
+      "#Property ${1|Public,Protected,Private|} ${2:Name} As ${3:String} = ${4:\"\"}",
+      "",
+      "${1} Get ${2} As ${3}",
+      "\tReturn m${2}",
+      "End Get",
+      "",
+      "${1} Set ${2}(${5:Value} As ${3})",
+      "\tm${2} = ${5:Value}",
+      "\t${6:Refresh}",
+      "End Set"
+    ],
+    "description": "Create a #Property with custom getter and setter"
   }
 }

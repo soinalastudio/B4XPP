@@ -203,3 +203,53 @@ End Sub
 assert.strictEqual(validProtectedInternalAccess.diagnostics.filter(d => d.severity === 'error').length, 0, 'Protected methods must be accessible inside descendants');
 
 console.log('B4X++ v0.2 member access tests OK');
+
+const customPropertyResult = transpileText(path.join(__dirname, 'CustomPropertyAccessors.bx'), `#Class CustomPropertyAccessors
+#Property Public Text As String = ""
+#Property Public Value As Int = 0
+#Property Protected Angle As Double = 0
+
+Public Get Text As String
+    Return mText.ToUpperCase
+End Get
+
+Public Set Text(Value As String)
+    If Value = Null Then Value = ""
+    mText = Value.Trim
+End Set
+
+Public Set Value(Value As Int)
+    If Value < 0 Then Value = 0
+    mValue = Value
+End Set
+
+Protected Get Angle As Double
+    Return mAngle
+End Get
+#End Class`, { addGeneratedHeader: false });
+assert.strictEqual(customPropertyResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Custom property accessors should not produce errors');
+const customPropertyContent = customPropertyResult.outputs.find(o => o.fileName === 'CustomPropertyAccessors.bas').content;
+assert(customPropertyContent.includes('Private mText As String = ""'), 'Custom accessor #Property should still generate its backing field');
+assert(customPropertyContent.includes('Public Sub getText As String'), 'Custom Get must generate getText');
+assert(customPropertyContent.includes('Return mText.ToUpperCase'), 'Custom getter body must be preserved');
+assert(customPropertyContent.includes('Public Sub setText(Value As String)'), 'Custom Set must generate setText');
+assert(customPropertyContent.includes('mText = Value.Trim'), 'Custom setter body must be preserved');
+assert(!customPropertyContent.includes('Return mText\nEnd Sub\n\n\' B4X++ custom property accessor: public set Text'), 'Auto getter must not be generated when custom getter exists');
+assert(customPropertyContent.includes('Public Sub getValue As Int'), 'Auto getter must remain when only custom setter exists');
+assert(customPropertyContent.includes('Public Sub setValue(B4XPP_Param_Value As Int)'), 'Setter parameter that hides the B4X property name must be renamed');
+assert(customPropertyContent.includes('mValue = B4XPP_Param_Value'), 'Renamed setter parameter must be rewritten in body');
+assert(customPropertyContent.includes('Private Sub getAngle As Double'), 'Protected custom getter must be lowered to Private in generated B4X');
+
+const computedPropertyResult = transpileText(path.join(__dirname, 'ComputedProperty.bx'), `#Class ComputedProperty
+Public Get IsReady As Boolean
+    Return True
+End Get
+Private Set DebugName(Name As String)
+End Set
+#End Class`, { addGeneratedHeader: false });
+assert.strictEqual(computedPropertyResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Manual computed properties should be accepted without #Property');
+const computedContent = computedPropertyResult.outputs.find(o => o.fileName === 'ComputedProperty.bas').content;
+assert(computedContent.includes('Public Sub getIsReady As Boolean'), 'Manual computed getter must generate getIsReady');
+assert(computedContent.includes('Private Sub setDebugName(Name As String)'), 'Manual private setter must generate a Private setDebugName');
+
+console.log('B4X++ v0.2.1 custom property accessor tests OK');

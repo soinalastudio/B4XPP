@@ -1,5 +1,54 @@
 # B4X++ for Visual Studio Code
 
+
+## v0.2.1 custom property accessors
+
+B4X++ `#Property` now supports custom getters and setters. This is useful for component developers who need validation, normalization or redraw logic inside setters while keeping the concise property declaration.
+
+```vb
+#Property Public Text As String = ""
+
+Public Set Text(Value As String)
+    If Value = Null Then Value = ""
+    mText = Value.Trim
+    Refresh
+End Set
+```
+
+B4X++ generates the backing field and the missing getter automatically, while using the custom setter body:
+
+```vb
+Private mText As String = ""
+
+Public Sub getText As String
+    Return mText
+End Sub
+
+Public Sub setText(Value As String)
+    If Value = Null Then Value = ""
+    mText = Value.Trim
+    Refresh
+End Sub
+```
+
+You can also create computed properties without `#Property`:
+
+```vb
+Public Get IsRunning As Boolean
+    Return mTimer.Enabled
+End Get
+```
+
+Visibility works as expected:
+
+```vb
+Protected Get AngleDegrees As Double
+    Return mAngleDegrees
+End Get
+```
+
+`Protected` is a B4X++-only concept and is emitted as `Private` in the generated `.bas` file.
+
 B4X++ is an experimental precompiler / transpiler layer for the B4X ecosystem. It lets you write `.bx` files with a small set of OOP-oriented extensions, then generates classic B4X `.bas` modules that can be opened and compiled with the official B4A, B4J or B4i IDE.
 
 The project is intentionally **not** a replacement for the B4X IDE. The first practical target is B4X component and library developers who want less repetition, cleaner shared code, simple inheritance-like patterns, interfaces, explicit polymorphism and direct `.b4xlib` packaging.

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1 - Custom property accessors
+
+This maintenance release keeps all v0.2.0 functionality and adds custom getter / setter support for `#Property` and computed properties.
+
+### Added
+
+- `Public Get PropertyName As Type` / `End Get` custom getters.
+- `Public Set PropertyName(Value As Type)` / `End Set` custom setters.
+- `Protected` and `Private` custom accessors. `Protected` is still lowered to B4X-compatible `Private` in generated `.bas` files.
+- Partial custom properties: `#Property` still generates the backing field and only auto-generates missing accessors.
+- Manual computed properties without `#Property`, for example `Public Get IsReady As Boolean`.
+- Tests covering custom getters, custom setters, protected getters, computed properties and setter parameter renaming.
+
+### Fixed
+
+- Custom setters named like `setValue(Value As Int)` now have their parameter safely renamed in generated B4X to avoid `Parameter name cannot hide global variable name`.
+- `symbols.json` now includes custom accessors as generated property methods through the existing method metadata pipeline.
+
 ## 0.2.0 - OOP language server groundwork
 
 This release keeps all v0.1 workflows and adds the first v0.2 foundations for safer B4X++ development.

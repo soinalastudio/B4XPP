@@ -1623,6 +1623,8 @@ function completionForB4XPPKeywords() {
     ['#Class', 'Start a B4X++ class.'],
     ['#Extends', 'Extend another B4X++ class.'],
     ['#Property', 'Generate field + getter/setter.'],
+    ['Get', 'Declare a custom B4X++ property getter.'],
+    ['Set', 'Declare a custom B4X++ property setter.'],
     ['#Interface', 'Start a B4X++ interface.'],
     ['#Include', 'Include another .bx file.']
   ];
