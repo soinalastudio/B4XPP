@@ -1,0 +1,42 @@
+#Class Enemy Abstract Extends Actor
+
+#Property AggroRange As Int = 3
+
+#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int, AggroRange As Int)
+    Super.Initialize(Id, Name, X, Y, MaxHealth, AttackPower)
+    setAggroRange(AggroRange)
+#End Constructor
+
+Override Sub Team As String
+    Return "enemy"
+End Sub
+
+Override Sub TakeTurn(World As Object)
+    Dim arenaWorld As GameWorld = World
+    Dim heroTarget As Object = arenaWorld.Hero
+    Dim heroActor As Poly IActor
+    heroActor = heroTarget
+    Dim heroIsAlive As Boolean = heroActor.IsAlive
+    If IsAlive = False Or heroIsAlive = False Then Return
+
+    Dim heroX As Int = heroActor.GetPosX
+    Dim heroY As Int = heroActor.GetPosY
+    Dim distanceToHero As Int = ArenaMath.Distance(getX, getY, heroX, heroY)
+    If distanceToHero <= 1 Then
+        Log(Attack(heroTarget))
+    Else If distanceToHero <= getAggroRange Then
+        Log(MoveToward(heroTarget, arenaWorld))
+    Else
+        Log(WarCry)
+    End If
+End Sub
+
+Protected Virtual Sub WarCry As String
+    Return getName & " waits in the dark."
+End Sub
+
+Override Sub Render As String
+    Return Super.Render & " aggro=" & getAggroRange
+End Sub
+
+#End Class

@@ -1,0 +1,57 @@
+#Class Hero Extends Actor Final
+
+#Property Score As Int = 0
+
+#Constructor(Id As String, Name As String, X As Int, Y As Int)
+    Super.Initialize(Id, Name, X, Y, 30, 6)
+    setScore(0)
+#End Constructor
+
+Override Sub Team As String
+    Return "hero"
+End Sub
+
+Override Sub TakeTurn(World As Object)
+    Dim arenaWorld As GameWorld = World
+    If IsAlive = False Then Return
+
+    Dim nearestEnemy As Object = arenaWorld.FindNearestEnemy(getX, getY)
+    If nearestEnemy = Null Then Return
+
+    Dim enemyActor As Poly IActor
+    enemyActor = nearestEnemy
+    Dim enemyX As Int = enemyActor.GetPosX
+    Dim enemyY As Int = enemyActor.GetPosY
+    Dim distanceToEnemy As Int = ArenaMath.Distance(getX, getY, enemyX, enemyY)
+    If distanceToEnemy <= 1 Then
+        Log(Attack(nearestEnemy))
+        Dim enemyAliveAfterAttack As Boolean = enemyActor.IsAlive
+        If enemyAliveAfterAttack = False Then
+            setScore(getScore + 10)
+            Log(getName & " gains 10 score. Score=" & getScore)
+        End If
+    Else
+        Log(MoveToward(nearestEnemy, arenaWorld))
+    End If
+End Sub
+
+Override Sub Attack(Target As Object) As String
+    Return "[Hero] " & Super.Attack(Target)
+End Sub
+
+Public Sub Heal(Amount As Int) As String
+    Dim beforeHealth As Int = getHealth
+    setHealth(getHealth + Amount)
+    Return getName & " heals " & (getHealth - beforeHealth) & " HP. HP=" & getHealth & "/" & getMaxHealth
+End Sub
+
+Public Sub BoostAttack(Amount As Int) As String
+    setAttackPower(getAttackPower + Amount)
+    Return getName & " gains +" & Amount & " attack. ATK=" & getAttackPower
+End Sub
+
+Override Sub Render As String
+    Return Super.Render & " score=" & getScore
+End Sub
+
+#End Class

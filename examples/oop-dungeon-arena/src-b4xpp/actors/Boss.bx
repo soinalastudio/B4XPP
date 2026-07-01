@@ -1,0 +1,25 @@
+#Class Boss Extends Enemy Final
+
+#Property Rage As Int = 0
+
+#Constructor(Id As String, Name As String, X As Int, Y As Int)
+    Super.Initialize(Id, Name, X, Y, 25, 7, 8)
+    setRage(0)
+#End Constructor
+
+Override Sub ReceiveDamage(Amount As Int, Source As Object) As String
+    Dim line As String = Super.ReceiveDamage(Amount, Source)
+    setRage(getRage + 1)
+    setAttackPower(7 + getRage)
+    Return line & " Rage=" & getRage & ", ATK=" & getAttackPower
+End Sub
+
+Override Sub Attack(Target As Object) As String
+    Return "[Boss] " & Super.Attack(Target)
+End Sub
+
+Override Sub WarCry As String
+    Return getName & " roars. The arena trembles."
+End Sub
+
+#End Class

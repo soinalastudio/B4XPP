@@ -1,0 +1,182 @@
+#Class GameWorld Final
+
+#Property ReadOnly Width As Int = 0
+#Property ReadOnly Height As Int = 0
+#Property ReadOnly Turn As Int = 0
+#Property ReadOnly Hero As Hero
+
+Sub Class_Globals
+    Private mActors As List
+    Private mCollectibles As List
+End Sub
+
+#Constructor(Width As Int, Height As Int)
+    mWidth = Width
+    mHeight = Height
+    mTurn = 0
+    mActors.Initialize
+    mCollectibles.Initialize
+#End Constructor
+
+Public Sub StartDemo
+    Dim heroPlayer As Hero
+    heroPlayer.Initialize("hero-1", "Ada", 1, 1)
+    mHero = heroPlayer
+    AddActor(heroPlayer)
+
+    Dim slimeOne As Slime
+    slimeOne.Initialize("slime-1", 4, 1)
+    AddActor(slimeOne)
+
+    Dim goblinOne As Goblin
+    goblinOne.Initialize("goblin-1", 6, 4)
+    goblinOne.Name = "Sneaky Goblin"
+    AddActor(goblinOne)
+
+    Dim bossOne As Boss
+    bossOne.Initialize("boss-1", "Captain Bug", 7, 5)
+    AddActor(bossOne)
+
+    Dim potionOne As HealthPotion
+    potionOne.Initialize("potion-1", 2, 1, 8)
+    AddCollectible(potionOne)
+
+    Dim boostOne As DamageBoost
+    boostOne.Initialize("boost-1", 3, 1, 2)
+    AddCollectible(boostOne)
+
+    Log(Render)
+
+    For i = 1 To 12
+        RunTurn
+        Log(Render)
+        If mHero.IsAlive = False Then
+            Log("Game over: the hero was defeated.")
+            Exit
+        End If
+        If CountLivingEnemies = 0 Then
+            Log("Victory: all enemies defeated.")
+            Exit
+        End If
+    Next
+End Sub
+
+Public Sub AddActor(ActorObject As Object)
+    mActors.Add(ActorObject)
+End Sub
+
+Public Sub AddCollectible(ItemObject As Object)
+    mCollectibles.Add(ItemObject)
+End Sub
+
+Public Sub MoveActor(ActorObject As Object, DX As Int, DY As Int)
+    Dim actorAgent As Poly IActor
+    actorAgent = ActorObject
+    Dim currentX As Int = actorAgent.GetPosX
+    Dim currentY As Int = actorAgent.GetPosY
+    actorAgent.SetPosX(ArenaMath.Clamp(currentX + DX, 0, mWidth - 1))
+    actorAgent.SetPosY(ArenaMath.Clamp(currentY + DY, 0, mHeight - 1))
+    CollectItemsForHero
+End Sub
+
+Public Sub RunTurn
+    mTurn = mTurn + 1
+    Log("-- turn " & mTurn & " --")
+    CollectItemsForHero
+
+    For i = 0 To mActors.Size - 1
+        Dim actorAgent As Poly IActor
+        actorAgent = mActors.Get(i)
+        Dim actorIsAlive As Boolean = actorAgent.IsAlive
+        If actorIsAlive Then actorAgent.TakeTurn(Me)
+    Next
+End Sub
+
+Public Sub FindNearestEnemy(StartX As Int, StartY As Int) As Object
+    Dim bestEnemy As Object = Null
+    Dim bestDistance As Int = 999999
+
+    For i = 0 To mActors.Size - 1
+        Dim actorAgent As Poly IActor
+        actorAgent = mActors.Get(i)
+        Dim actorIsAlive As Boolean = actorAgent.IsAlive
+        Dim actorTeam As String = actorAgent.Team
+        Dim actorIsEnemy As Boolean
+        If actorTeam = "enemy" Then
+            actorIsEnemy = True
+        Else
+            actorIsEnemy = False
+        End If
+        If actorIsAlive And actorIsEnemy Then
+            Dim actorX As Int = actorAgent.GetPosX
+            Dim actorY As Int = actorAgent.GetPosY
+            Dim distanceToCandidate As Int = ArenaMath.Distance(StartX, StartY, actorX, actorY)
+            If distanceToCandidate < bestDistance Then
+                bestEnemy = mActors.Get(i)
+                bestDistance = distanceToCandidate
+            End If
+        End If
+    Next
+
+    Return bestEnemy
+End Sub
+
+Public Sub CountLivingEnemies As Int
+    Dim count As Int = 0
+    For i = 0 To mActors.Size - 1
+        Dim actorAgent As Poly IActor
+        actorAgent = mActors.Get(i)
+        Dim actorIsAlive As Boolean = actorAgent.IsAlive
+        Dim actorTeam As String = actorAgent.Team
+        Dim actorIsEnemy As Boolean
+        If actorTeam = "enemy" Then
+            actorIsEnemy = True
+        Else
+            actorIsEnemy = False
+        End If
+        If actorIsAlive And actorIsEnemy Then count = count + 1
+    Next
+    Return count
+End Sub
+
+Private Sub CollectItemsForHero
+    If mHero = Null Then Return
+    For i = 0 To mCollectibles.Size - 1
+        Dim itemAgent As Poly ICollectible
+        itemAgent = mCollectibles.Get(i)
+        Dim itemWasPicked As Boolean = itemAgent.IsPicked
+        If itemWasPicked = False Then
+            Dim heroX As Int = mHero.getX
+            Dim heroY As Int = mHero.getY
+            Dim sameTile As Boolean = itemAgent.SameTile(heroX, heroY)
+            If sameTile Then
+                Dim line As String = itemAgent.ApplyTo(mHero)
+                If line.Length > 0 Then Log(line)
+            End If
+        End If
+    Next
+End Sub
+
+Public Sub Render As String
+    Dim sb As StringBuilder
+    sb.Initialize
+    sb.Append(CRLF).Append("Arena ").Append(mWidth).Append("x").Append(mHeight).Append(" turn=").Append(mTurn).Append(CRLF)
+    sb.Append("Actors:").Append(CRLF)
+
+    For i = 0 To mActors.Size - 1
+        Dim renderableActor As Poly IRenderable
+        renderableActor = mActors.Get(i)
+        sb.Append("  - ").Append(renderableActor.Render).Append(CRLF)
+    Next
+
+    sb.Append("Items:").Append(CRLF)
+    For i = 0 To mCollectibles.Size - 1
+        Dim renderableItem As Poly IRenderable
+        renderableItem = mCollectibles.Get(i)
+        sb.Append("  - ").Append(renderableItem.Render).Append(CRLF)
+    Next
+
+    Return sb.ToString
+End Sub
+
+#End Class

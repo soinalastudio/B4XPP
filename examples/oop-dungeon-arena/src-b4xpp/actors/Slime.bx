@@ -1,0 +1,15 @@
+#Class Slime Extends Enemy Final
+
+#Constructor(Id As String, X As Int, Y As Int)
+    Super.Initialize(Id, "Slime", X, Y, 8, 2, 4)
+#End Constructor
+
+Override Sub Attack(Target As Object) As String
+    Return "[Slime] " & Super.Attack(Target)
+End Sub
+
+Override Sub WarCry As String
+    Return getName & " jiggles suspiciously."
+End Sub
+
+#End Class

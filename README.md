@@ -99,6 +99,8 @@ p.Initialize("Jane", 12)  ' -> p.Initialize3("Jane", 12)
 
 `Super.Initialize(...)` is resolved to the correct generated parent constructor during flattening.
 
+B4X runtime caveat: only a call to the generated `Initialize` Sub marks a fresh class instance as initialized. Avoid calling generated `Initialize2`, `Initialize3`, etc. as the first method on a newly declared B4X object in real B4A/B4J/B4i projects. Until runtime-safe constructor overloads are implemented, prefer one public constructor plus setters or factory helpers for example projects.
+
 ### Safe method overloads
 
 B4X++ also supports method overloads when the parameter count is different:
@@ -338,16 +340,16 @@ Open the Command Palette with `Ctrl+Shift+P`, then search for `B4X++`.
 
 | Command | Purpose |
 |---|---|
-| `B4X++: Create Example Project` | Create a basic OOP sample, a language showcase sample, or both GitHub example folders. |
+| `B4X++: Create Example Project` | Create a basic OOP sample, a language showcase sample, an OOP game sample, or all GitHub example folders. |
 | `B4X++: Generate .bas Files` | Generate `.bas` files into `generated-b4x`. Useful for inspection. |
 | `B4X++: Sync #Project` | Generate/synchronize the B4A/B4J/B4i project declared by `#Project`. This is the recommended test workflow. |
 | `B4X++: Create B4A/B4J/B4i Project` | Create a project interactively when no `#Project` directive is used. |
 | `B4X++: Build .b4xlib` | Package generated modules and optional resources into a `.b4xlib`. |
 | `B4X++: Open Generated Folder` | Open the `generated-b4x` folder. |
 
-## Two included examples
+## Three included examples
 
-This version includes two clean, generic examples. No farm, company or local domain-specific naming is used.
+This version includes three clean, generic examples. No farm, company or local domain-specific naming is used.
 
 ### 1. Basic OOP sample: Animal / Dog / Cat / Bird
 
@@ -424,6 +426,20 @@ The showcase example demonstrates most current B4X++ keywords and directives:
 - `Super.`
 - `This.`
 - `Poly`
+
+### 3. OOP game sample: Dungeon Arena
+
+The `oop-dungeon-arena` example is a small turn-based game intended to stress-test heavier OOP usage. It demonstrates:
+
+- game entities split into `GameObject`, `Actor`, `Hero`, `Enemy`, `Slime`, `Goblin`, `Boss`;
+- collectible items with `Item`, `HealthPotion` and `DamageBoost`;
+- `IRenderable`, `IActor` and `ICollectible` interfaces;
+- abstract classes, final classes, inheritance flattening and `Super.Method`;
+- custom property accessors;
+- `Poly` dispatch for actors, renderables and collectibles;
+- a `#StaticCode ArenaMath` helper module.
+
+Open `examples/oop-dungeon-arena` in VS Code and run `B4X++: Sync #Project` to generate the B4J Non-UI demo project.
 
 
 ## Generated file versioning

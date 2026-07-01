@@ -330,3 +330,43 @@ assert(drawDemoContent.includes('Sub TestDraw2(i As Int)'), 'Second implicit-vis
 assert(drawDemoContent.includes('TestDraw2(1)'), 'Calls to second implicit-visibility overload should be rewritten');
 
 console.log('B4X++ v0.3.2 implicit visibility overload tests OK');
+
+const gameExampleRoot = path.join(__dirname, '..', 'examples', 'oop-dungeon-arena', 'src-b4xpp');
+function collectBxExampleFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...collectBxExampleFiles(full));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith('.bx')) out.push(full);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+if (fs.existsSync(gameExampleRoot)) {
+  const gameResult = transpileFiles(collectBxExampleFiles(gameExampleRoot), {
+    addGeneratedHeader: true,
+    workspaceRoot: path.join(__dirname, '..', 'examples', 'oop-dungeon-arena')
+  });
+  assert.strictEqual(gameResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'OOP Dungeon Arena example should transpile without errors');
+  assert(gameResult.outputs.some(o => o.fileName === 'GameWorld.bas'), 'Game example must generate GameWorld.bas');
+  assert(gameResult.outputs.some(o => o.fileName === 'B4XPP_Runtime.bas'), 'Game example uses Poly and must generate B4XPP_Runtime.bas');
+  const gameOutputsByName = new Map(gameResult.outputs.map(o => [o.fileName, o.content]));
+  assert(/Sub Process_Globals/i.test(gameOutputsByName.get('ArenaMath.bas') || ''), 'StaticCode helper must include Process_Globals for B4J code modules');
+  const gameWorldContent = gameOutputsByName.get('GameWorld.bas') || '';
+  const b4jRejectedComparison = new RegExp('B4XPP_Runtime\\.Dispatch\\([^\\n]+\\)=\\s*False', 'i');
+  assert(!b4jRejectedComparison.test(gameWorldContent), 'GameWorld must avoid direct Dispatch() comparison forms that B4J can reject');
+  assert(!gameWorldContent.includes('goblinOne.Initialize2'), 'GameWorld must not call Initialize2 on a fresh B4X class instance');
+  assert(!/\bPublic\s+Sub\s+Step\b/i.test(gameWorldContent), 'GameWorld must not generate Step because Step is a B4X reserved keyword');
+  assert(!/\bStep\b/.test(gameWorldContent), 'GameWorld generated code must avoid Step as a call, sub name or dispatch case');
+  assert(gameWorldContent.includes('Public Sub RunTurn'), 'GameWorld should expose RunTurn instead of Step');
+  for (const fileName of ['Hero.bas', 'Enemy.bas', 'Slime.bas', 'Goblin.bas', 'Boss.bas']) {
+    const content = gameOutputsByName.get(fileName) || '';
+    assert(!content.includes('Dim gameWorld As GameWorld'), `${fileName} must avoid local variables named like the GameWorld module`);
+  }
+  const inheritedPrivateBackingFieldUse = /[^A-Za-z0-9_]mName\b|[^A-Za-z0-9_]mX\b|[^A-Za-z0-9_]mY\b|[^A-Za-z0-9_]mHealth\b|[^A-Za-z0-9_]mPicked\b/;
+  for (const fileName of ['Hero.bas', 'Enemy.bas', 'Slime.bas', 'Goblin.bas', 'Boss.bas', 'HealthPotion.bas', 'DamageBoost.bas']) {
+    const content = gameOutputsByName.get(fileName) || '';
+    assert(!inheritedPrivateBackingFieldUse.test(content), `${fileName} must not reference inherited private backing fields directly`);
+  }
+}
+
+console.log('B4X++ OOP Dungeon Arena example tests OK');

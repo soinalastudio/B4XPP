@@ -1,0 +1,6 @@
+#Interface ICollectible
+Sub ApplyTo(Target As Object) As String
+Sub IsPicked As Boolean
+Sub SameTile(TileX As Int, TileY As Int) As Boolean
+Sub Render As String
+#End Interface

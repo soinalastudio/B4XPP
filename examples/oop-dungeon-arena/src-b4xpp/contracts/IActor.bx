@@ -1,0 +1,12 @@
+#Interface IActor
+Sub TakeTurn(World As Object)
+Sub IsAlive As Boolean
+Sub Team As String
+Sub ReceiveDamage(Amount As Int, Source As Object) As String
+Sub Attack(Target As Object) As String
+Sub GetPosX As Int
+Sub SetPosX(Value As Int)
+Sub GetPosY As Int
+Sub SetPosY(Value As Int)
+Sub Render As String
+#End Interface

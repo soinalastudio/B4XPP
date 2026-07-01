@@ -1,0 +1,34 @@
+#Class GameObject Abstract Implements IRenderable
+
+#Property ReadOnly Id As String = ""
+#Property Name As String = "Object"
+#Property X As Int = 0
+#Property Y As Int = 0
+
+#Constructor(Id As String, Name As String)
+    mId = Id
+    mName = Name
+    mX = 0
+    mY = 0
+#End Constructor
+
+#Constructor(Id As String, Name As String, X As Int, Y As Int)
+    mId = Id
+    mName = Name
+    mX = X
+    mY = Y
+#End Constructor
+
+Virtual Sub Render As String
+    Return mName & "@" & FormatPosition
+End Sub
+
+Public Sub SameTile(TileX As Int, TileY As Int) As Boolean
+    Return mX = TileX And mY = TileY
+End Sub
+
+Protected Sub FormatPosition As String
+    Return "(" & mX & "," & mY & ")"
+End Sub
+
+#End Class

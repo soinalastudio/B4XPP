@@ -1,0 +1,77 @@
+#Class Actor Abstract Extends GameObject Implements IActor
+
+#Property Health As Int = 10
+#Property MaxHealth As Int = 10
+#Property AttackPower As Int = 1
+#Property Speed As Int = 1
+
+#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int)
+    Super.Initialize(Id, Name, X, Y)
+    setMaxHealth(MaxHealth)
+    setHealth(MaxHealth)
+    setAttackPower(AttackPower)
+    setSpeed(1)
+#End Constructor
+
+Public Sub IsAlive As Boolean
+    Return getHealth > 0
+End Sub
+
+Public Sub GetPosX As Int
+    Return getX
+End Sub
+
+Public Sub SetPosX(Value As Int)
+    setX(Value)
+End Sub
+
+Public Sub GetPosY As Int
+    Return getY
+End Sub
+
+Public Sub SetPosY(Value As Int)
+    setY(Value)
+End Sub
+
+Virtual Sub Team As String
+    Return "neutral"
+End Sub
+
+Virtual Sub TakeTurn(World As Object)
+End Sub
+
+Virtual Sub ReceiveDamage(Amount As Int, Source As Object) As String
+    Dim beforeHealth As Int = getHealth
+    setHealth(getHealth - Amount)
+    Return getName & " takes " & (beforeHealth - getHealth) & " damage. HP=" & getHealth & "/" & getMaxHealth
+End Sub
+
+Virtual Sub Attack(Target As Object) As String
+    Dim targetActor As Poly IActor
+    targetActor = Target
+    Dim targetAlive As Boolean = targetActor.IsAlive
+    If targetAlive = False Then Return getName & " has no living target."
+    Return getName & " attacks. " & targetActor.ReceiveDamage(getAttackPower, Me)
+End Sub
+
+Protected Sub MoveToward(Target As Object, World As GameWorld) As String
+    Dim targetActor As Poly IActor
+    targetActor = Target
+    Dim targetX As Int = targetActor.GetPosX
+    Dim targetY As Int = targetActor.GetPosY
+    Dim dx As Int = ArenaMath.Sign(targetX - getX)
+    Dim dy As Int = ArenaMath.Sign(targetY - getY)
+    If ArenaMath.AbsI(targetX - getX) >= ArenaMath.AbsI(targetY - getY) Then
+        dy = 0
+    Else
+        dx = 0
+    End If
+    World.MoveActor(Me, dx, dy)
+    Return getName & " moves " & ArenaMath.DirectionLabel(dx, dy) & " to " & FormatPosition
+End Sub
+
+Override Sub Render As String
+    Return Super.Render & " hp=" & getHealth & "/" & getMaxHealth & " atk=" & getAttackPower
+End Sub
+
+#End Class

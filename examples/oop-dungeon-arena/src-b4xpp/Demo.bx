@@ -1,0 +1,37 @@
+#Project B4J-NonUI B4XPPDungeonArena
+#Package b4xpp.examples.dungeonarena
+#ProjectDir b4x-ide-projects/B4XPPDungeonArena-b4j-nonui
+#MainModule Main
+
+#B4XLib B4XPPDungeonArena
+#Version 1.00
+#Author B4X++ Team
+#B4XLibDir b4x-libs
+#SupportedPlatforms B4A, B4J, B4i
+
+#Include "contracts/IRenderable.bx"
+#Include "contracts/IActor.bx"
+#Include "contracts/ICollectible.bx"
+#Include "core/ArenaMath.bx"
+#Include "core/GameObject.bx"
+#Include "actors/Actor.bx"
+#Include "actors/Hero.bx"
+#Include "actors/Enemy.bx"
+#Include "actors/Slime.bx"
+#Include "actors/Goblin.bx"
+#Include "actors/Boss.bx"
+#Include "items/Item.bx"
+#Include "items/HealthPotion.bx"
+#Include "items/DamageBoost.bx"
+#Include "services/GameWorld.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Log("=== B4X++ OOP Dungeon Arena ===")
+
+    Dim world As GameWorld
+    world.Initialize(8, 6)
+    world.StartDemo
+End Sub

@@ -422,6 +422,7 @@ Rules:
 - Constructor overload resolution is based on parameter count only.
 - Same-arity constructor overloads are errors.
 - `Super.Initialize(...)` resolves to the correct generated parent constructor during flattening.
+- B4X runtime caveat: `Initialize2`, `Initialize3`, etc. are normal methods from the B4X runtime point of view. A fresh class instance should be initialized through `Initialize` first. For real examples and AI-generated starter projects, prefer one public constructor and use setters/factory helpers instead of calling `Initialize2` as the first method.
 
 ---
 
@@ -909,6 +910,12 @@ Prefer B4J Non-UI examples for quick language testing:
 
 Prefer `.b4xlib` examples for component / CustomView validation.
 
+The repository includes three recommended examples for agents to reuse or test against:
+
+- `examples/basic-animal`: minimal inheritance and natural polymorphism.
+- `examples/language-showcase`: broad syntax and directive coverage.
+- `examples/oop-dungeon-arena`: heavier OOP game sample with interfaces, abstract classes, custom property accessors, `Poly` dispatch and `#StaticCode`.
+
 ---
 
 ## 22. Minimal valid examples
@@ -1035,9 +1042,10 @@ When editing the transpiler or generating major examples, keep these scenarios w
 10. Method overloads generating `Method`, `Method2`, etc.
 11. Same-arity method overload diagnostic.
 12. `#StaticCode` module generation.
-13. B4XAnalogClock CustomView `.b4xlib` build without unnecessary `B4XPP_Runtime.bas`.
-14. Inherited `#DesignerProperty` and `#Event` propagation.
-15. B4J Designer color values such as `0xffffffff` handled safely.
+13. OOP Dungeon Arena example generates without diagnostics and includes `B4XPP_Runtime.bas` because it uses `Poly`.
+14. B4XAnalogClock CustomView `.b4xlib` build without unnecessary `B4XPP_Runtime.bas`.
+15. Inherited `#DesignerProperty` and `#Event` propagation.
+16. B4J Designer color values such as `0xffffffff` handled safely.
 
 ---
 

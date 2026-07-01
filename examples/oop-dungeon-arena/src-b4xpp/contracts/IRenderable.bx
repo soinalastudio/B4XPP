@@ -1,0 +1,3 @@
+#Interface IRenderable
+Sub Render As String
+#End Interface

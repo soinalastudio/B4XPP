@@ -1,0 +1,17 @@
+#Class DamageBoost Extends Item Final
+
+#Property Amount As Int = 2
+
+#Constructor(Id As String, X As Int, Y As Int, Amount As Int)
+    Super.Initialize(Id, "Damage Boost", X, Y)
+    setAmount(Amount)
+#End Constructor
+
+Override Sub ApplyTo(Target As Object) As String
+    If getPicked Then Return ""
+    Dim heroTarget As Hero = Target
+    setPicked(True)
+    Return heroTarget.BoostAttack(getAmount)
+End Sub
+
+#End Class
