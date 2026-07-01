@@ -308,3 +308,25 @@ End Sub
 assert(ambiguousOverload.diagnostics.some(d => d.severity === 'error' && /Ambiguous overload/i.test(d.message)), 'Same-arity method overloads must be rejected until type-based resolution is implemented');
 
 console.log('B4X++ v0.3.1 overload tests OK');
+
+const implicitVisibilityOverload = transpileText(path.join(__dirname, 'ImplicitVisibilityOverload.bx'), `#Class DrawDemo
+Sub Class_Globals
+    Private mBase As Object
+End Sub
+Sub TestDraw()
+    If mBase.IsInitialized = False Then Return
+End Sub
+Sub TestDraw(i As Int)
+    If mBase.IsInitialized = False Then Return
+End Sub
+Sub Caller
+    TestDraw(1)
+End Sub
+#End Class`, { addGeneratedHeader: false });
+assert.strictEqual(implicitVisibilityOverload.diagnostics.filter(d => d.severity === 'error').length, 0, 'Safe overloads without explicit visibility should not produce errors');
+const drawDemoContent = implicitVisibilityOverload.outputs.find(o => o.fileName === 'DrawDemo.bas').content;
+assert(drawDemoContent.includes('Sub TestDraw()'), 'First implicit-visibility overload should keep original name');
+assert(drawDemoContent.includes('Sub TestDraw2(i As Int)'), 'Second implicit-visibility overload should generate suffix 2');
+assert(drawDemoContent.includes('TestDraw2(1)'), 'Calls to second implicit-visibility overload should be rewritten');
+
+console.log('B4X++ v0.3.2 implicit visibility overload tests OK');

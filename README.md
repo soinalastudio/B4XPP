@@ -1,8 +1,8 @@
 # B4X++ for Visual Studio Code
 
-## v0.3.1: Constructor / Method Overloads + IntelliSense
+## v0.3.2: Constructor / Method Overloads + IntelliSense
 
-B4X++ v0.3.1 adds source-level overloads while generating classic B4X-compatible `Initialize`, `Initialize2`, `Method`, `Method2`, ... names. IntelliSense and signature help understand these overloads.
+B4X++ v0.3.2 adds source-level overloads while generating classic B4X-compatible `Initialize`, `Initialize2`, `Method`, `Method2`, ... names. IntelliSense and signature help understand these overloads.
 
 ### Constructor overloading
 
@@ -65,7 +65,19 @@ Public Sub SetValue2(Value As String, Format As String)
 End Sub
 ```
 
-Same-arity overloads are rejected for now because v0.3.1 does not yet perform stable type-based overload resolution.
+Same-arity overloads are rejected for now because v0.3.2 does not yet perform stable type-based overload resolution.
+
+As of v0.3.2, overloads without an explicit visibility modifier are also renamed correctly:
+
+```vb
+Sub TestDraw()
+End Sub
+
+Sub TestDraw(i As Int)
+End Sub
+```
+
+Generated B4X uses `TestDraw` and `TestDraw2`.
 
 ## v0.3.0: Language Intelligence
 
@@ -833,3 +845,28 @@ Every generation command writes metadata under `.b4xpp/`:
 ```
 
 `symbols.json` is used by editor tooling and future LSP work. `sourceMap.json` currently stores a module-level mapping from generated `.bas` files back to their `.bx` source files. Fine-grained line mappings are planned for later releases.
+
+
+### v0.3.2 overload fix
+
+B4X++ now correctly renames safe method overloads even when the overloaded Subs do not explicitly declare `Public`, `Private`, or `Protected`.
+
+```vb
+Sub TestDraw()
+End Sub
+
+Sub TestDraw(i As Int)
+End Sub
+```
+
+Generates valid B4X:
+
+```vb
+Sub TestDraw()
+End Sub
+
+Sub TestDraw2(i As Int)
+End Sub
+```
+
+Calls such as `TestDraw(1)` are rewritten to `TestDraw2(1)`.

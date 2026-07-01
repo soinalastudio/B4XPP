@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 - 2026-07-01
+
+### Fixed
+- Fixed safe method overload generation when class body lines are transformed after `Class_Globals` extraction.
+- Overloaded methods without explicit `Public` / `Private` / `Protected` are now renamed correctly in generated B4X output, e.g. `Sub TestDraw()` + `Sub TestDraw(i As Int)` becomes `TestDraw` + `TestDraw2`.
+- Call-site rewriting for these overloads is preserved.
+
 ## 0.3.1 - Constructor and safe method overloads
 
 This release adds B4X++-level overloads while keeping generated B4X compatible with classic B4X naming conventions.

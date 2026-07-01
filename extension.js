@@ -3102,7 +3102,7 @@ function v3CollectOverloadDiagnosticsForOwner(owner, add) {
     const byArity = new Map();
     for (const method of methods) {
       const arity = (method.params || []).length;
-      if (byArity.has(arity)) add(method.file, method.line, 'error', `Ambiguous overload: ${owner.name}.${method.name} has more than one overload with ${arity} parameter(s). v0.3.1 resolves overloads by parameter count only.`);
+      if (byArity.has(arity)) add(method.file, method.line, 'error', `Ambiguous overload: ${owner.name}.${method.name} has more than one overload with ${arity} parameter(s). v0.3.2 resolves overloads by parameter count only.`);
       else byArity.set(arity, method);
     }
   }
