@@ -66,13 +66,14 @@
       "",
       "#Property ${2:Name} As ${3:String}",
       "",
-      "#Constructor(${2:Name} As ${3:String})",
-      "\tm${2:Name} = ${2:Name}",
+      "#Constructor(a${2:Name} As ${3:String})",
+      "\t' Property assignment sugar generates set${2:Name}(a${2:Name}).",
+      "\t${2:Name} = a${2:Name}",
       "#End Constructor",
       "",
       "#End Class"
     ],
-    "description": "Create a B4X++ class"
+    "description": "Create a B4X++ class with safe aName parameter and property assignment sugar"
   },
   "B4X++ Class Extends": {
     "prefix": "extends",

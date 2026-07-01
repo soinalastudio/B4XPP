@@ -232,12 +232,12 @@ const customPropertyContent = customPropertyResult.outputs.find(o => o.fileName 
 assert(customPropertyContent.includes('Private mText As String = ""'), 'Custom accessor #Property should still generate its backing field');
 assert(customPropertyContent.includes('Public Sub getText As String'), 'Custom Get must generate getText');
 assert(customPropertyContent.includes('Return mText.ToUpperCase'), 'Custom getter body must be preserved');
-assert(customPropertyContent.includes('Public Sub setText(Value As String)'), 'Custom Set must generate setText');
-assert(customPropertyContent.includes('mText = Value.Trim'), 'Custom setter body must be preserved');
+assert(customPropertyContent.includes('Public Sub setText(aValue As String)'), 'Custom Set must generate setText with a safe parameter name');
+assert(customPropertyContent.includes('mText = aValue.Trim'), 'Custom setter body must be preserved with renamed parameter');
 assert(!customPropertyContent.includes('Return mText\nEnd Sub\n\n\' B4X++ custom property accessor: public set Text'), 'Auto getter must not be generated when custom getter exists');
 assert(customPropertyContent.includes('Public Sub getValue As Int'), 'Auto getter must remain when only custom setter exists');
-assert(customPropertyContent.includes('Public Sub setValue(B4XPP_Param_Value As Int)'), 'Setter parameter that hides the B4X property name must be renamed');
-assert(customPropertyContent.includes('mValue = B4XPP_Param_Value'), 'Renamed setter parameter must be rewritten in body');
+assert(customPropertyContent.includes('Public Sub setValue(aValue As Int)'), 'Setter parameter that hides the B4X property name must be renamed');
+assert(customPropertyContent.includes('mValue = aValue'), 'Renamed setter parameter must be rewritten in body');
 assert(customPropertyContent.includes('Private Sub getAngle As Double'), 'Protected custom getter must be lowered to Private in generated B4X');
 
 const computedPropertyResult = transpileText(path.join(__dirname, 'ComputedProperty.bx'), `#Class ComputedProperty
@@ -253,6 +253,26 @@ assert(computedContent.includes('Public Sub getIsReady As Boolean'), 'Manual com
 assert(computedContent.includes('Private Sub setDebugName(Name As String)'), 'Manual private setter must generate a Private setDebugName');
 
 console.log('B4X++ v0.2.1 custom property accessor tests OK');
+
+const propertyAssignmentResult = transpileText(path.join(__dirname, 'PropertyAssignmentSugar.bx'), `#Class PropertyAssignmentSugar
+#Property X As Float = 0
+#Property Width As Float = 10
+#Constructor(X As Float, Width As Float)
+    X = X
+    Width = Width
+#End Constructor
+Public Sub Resize(Width As Float)
+    If Width > 0 Then Width = Width
+End Sub
+#End Class`, { addGeneratedHeader: false });
+assert.strictEqual(propertyAssignmentResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Property assignment sugar should not produce errors');
+const propertyAssignmentContent = propertyAssignmentResult.outputs.find(o => o.fileName === 'PropertyAssignmentSugar.bas').content;
+assert(propertyAssignmentContent.includes('Public Sub Initialize(aX As Float, aWidth As Float)'), 'Unsafe constructor parameter names should be renamed to aX / aWidth');
+assert(propertyAssignmentContent.includes('setX(aX)'), 'Bare property assignment X = value must generate setX(value)');
+assert(propertyAssignmentContent.includes('If aWidth > 0 Then setWidth(aWidth)'), 'Inline one-line If property assignment must generate a setter call after Then');
+assert(propertyAssignmentContent.includes('Public Sub Resize(aWidth As Float)'), 'Unsafe method parameter names should be renamed to aWidth');
+
+console.log('B4X++ property assignment sugar tests OK');
 
 const overloadResult = transpileText(path.join(__dirname, 'OverloadDemo.bx'), `#Class Person
 #Constructor
@@ -370,3 +390,43 @@ if (fs.existsSync(gameExampleRoot)) {
 }
 
 console.log('B4X++ OOP Dungeon Arena example tests OK');
+
+const breakoutExampleRoot = path.join(__dirname, '..', 'examples', 'xui-breakout', 'src-b4xpp');
+if (fs.existsSync(breakoutExampleRoot)) {
+  const breakoutResult = transpileFiles(collectBxExampleFiles(breakoutExampleRoot), {
+    addGeneratedHeader: true,
+    workspaceRoot: path.join(__dirname, '..', 'examples', 'xui-breakout')
+  });
+  assert.strictEqual(breakoutResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'XUI Breakout example should transpile without errors');
+  assert.strictEqual(breakoutResult.project.platform, 'b4j-ui', 'XUI Breakout must be a B4J UI project');
+  assert((breakoutResult.project.b4jDependsOn || []).some(v => /^jxui$/i.test(v)), 'XUI Breakout #Project should carry B4J jXUI dependency');
+  assert(breakoutResult.outputs.some(o => o.fileName === 'BreakoutGame.bas'), 'XUI Breakout must generate BreakoutGame.bas');
+  assert(breakoutResult.outputs.some(o => o.fileName === 'BreakoutMath.bas'), 'XUI Breakout must generate BreakoutMath.bas');
+  assert(!breakoutResult.outputs.some(o => o.fileName === 'B4XPP_Runtime.bas'), 'XUI Breakout should not need B4XPP_Runtime because it avoids Poly dispatch');
+  const breakoutOutputsByName = new Map(breakoutResult.outputs.map(o => [o.fileName, o.content]));
+  assert(/Sub Process_Globals/i.test(breakoutOutputsByName.get('BreakoutMath.bas') || ''), 'Breakout StaticCode helper must include Process_Globals for B4J');
+  const ballBreakoutContent = breakoutOutputsByName.get('Ball.bas') || '';
+  assert(ballBreakoutContent.includes('Public Sub ResetAt(aBallCenterX As Float, aBallCenterY As Float)'), 'Ball.ResetAt must avoid CenterX/CenterY parameter names that collide with inherited helper Subs');
+  assert(!ballBreakoutContent.includes('Public Sub ResetAt(CenterX As Float, CenterY As Float)'), 'Ball.ResetAt must not use CenterX/CenterY as parameters');
+  assert(ballBreakoutContent.includes('setVelocityX(190)'), 'Readable B4X++ property assignment should still generate setter calls');
+  const mainBreakoutContent = breakoutOutputsByName.get('Main.bas') || '';
+  assert(mainBreakoutContent.includes('Private gameClock As Timer'), 'Breakout Main must keep Timer as a Process_Globals field');
+  assert(mainBreakoutContent.includes('Private breakoutApp As BreakoutGame'), 'Breakout Main must keep the game object as a Process_Globals field');
+  for (const [fileName, content] of breakoutOutputsByName.entries()) {
+    assert(!/\bPublic\s+Sub\s+Step\b/i.test(content), `${fileName} must avoid Step as a reserved B4X keyword`);
+    assert(!/\.Initialize2\b/i.test(content), `${fileName} must avoid Initialize2 as a first-constructor pattern`);
+    assert(!/Intersects\s*\(\s*Other\s+As\s+GameEntity/i.test(content), `${fileName} must avoid Intersects(Other As GameEntity) because flattened subclasses are not true B4J subclasses`);
+    assert(!/\.Intersects\s*\(\s*mPaddle\s*\)/i.test(content), `${fileName} must avoid passing Paddle to Intersects(GameEntity)`);
+    assert(!/\.Intersects\s*\(\s*brickItem\s*\)/i.test(content), `${fileName} must avoid passing Brick to Intersects(GameEntity)`);
+
+    assert(!/\bIf\s+gainedPoints\s*>\s*0\s+Then\s+Remaining\s*=/i.test(content), `${fileName} must rewrite inline If property assignments after Then`);
+  }
+  for (const fileName of ['BreakoutGame.bas', 'BrickGrid.bas']) {
+    const content = breakoutOutputsByName.get(fileName) || '';
+    assert(!/Dim\s+ball\s+As\s+Ball/i.test(content), `${fileName} must avoid local variable names that match module names`);
+    assert(!/Dim\s+brick\s+As\s+Brick/i.test(content), `${fileName} must avoid local variable names that match module names`);
+  }
+}
+
+console.log('B4X++ XUI Breakout example tests OK');
+

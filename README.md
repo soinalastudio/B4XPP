@@ -193,6 +193,32 @@ The source map is best-effort in v0.2.2: unchanged and directly transformed line
 
 
 
+
+## Property assignment sugar and safer parameter names
+
+Inside a B4X++ class, a bare assignment to a declared property is now treated as a property setter call. This keeps `.bx` code readable while still generating classic B4X-compatible `setX(...)` calls.
+
+```vb
+#Property X As Float = 0
+#Property Width As Float = 10
+
+#Constructor(aX As Float, aWidth As Float)
+    X = aX
+    Width = aWidth
+#End Constructor
+```
+
+Generated B4X uses the existing setter methods:
+
+```vb
+Public Sub Initialize(aX As Float, aWidth As Float)
+    setX(aX)
+    setWidth(aWidth)
+End Sub
+```
+
+Prefer constructor and Sub arguments prefixed with `a`, such as `aX`, `aWidth`, `aColor`, `aGameWidth`. Avoid names that match properties, modules/classes, methods, generated fields, or B4X keywords such as `Step`. The transpiler can rename unsafe parameters in generated `.bas`, and the VS Code hover help now shows the coding hint first, with debug information below it.
+
 ## v0.2.1 custom property accessors
 
 B4X++ `#Property` now supports custom getters and setters. This is useful for component developers who need validation, normalization or redraw logic inside setters while keeping the concise property declaration.
@@ -340,16 +366,16 @@ Open the Command Palette with `Ctrl+Shift+P`, then search for `B4X++`.
 
 | Command | Purpose |
 |---|---|
-| `B4X++: Create Example Project` | Create a basic OOP sample, a language showcase sample, an OOP game sample, or all GitHub example folders. |
+| `B4X++: Create Example Project` | Create a basic OOP sample, a language showcase sample, an OOP console game, an XUI Breakout game, or all GitHub example folders. |
 | `B4X++: Generate .bas Files` | Generate `.bas` files into `generated-b4x`. Useful for inspection. |
 | `B4X++: Sync #Project` | Generate/synchronize the B4A/B4J/B4i project declared by `#Project`. This is the recommended test workflow. |
 | `B4X++: Create B4A/B4J/B4i Project` | Create a project interactively when no `#Project` directive is used. |
 | `B4X++: Build .b4xlib` | Package generated modules and optional resources into a `.b4xlib`. |
 | `B4X++: Open Generated Folder` | Open the `generated-b4x` folder. |
 
-## Three included examples
+## Four included examples
 
-This version includes three clean, generic examples. No farm, company or local domain-specific naming is used.
+This version includes four clean, generic examples. No farm, company or local domain-specific naming is used.
 
 ### 1. Basic OOP sample: Animal / Dog / Cat / Bird
 
@@ -441,6 +467,20 @@ The `oop-dungeon-arena` example is a small turn-based game intended to stress-te
 
 Open `examples/oop-dungeon-arena` in VS Code and run `B4X++: Sync #Project` to generate the B4J Non-UI demo project.
 
+
+### 4. XUI game sample: Breakout
+
+The `xui-breakout` example is a small B4J UI game rendered with XUI. It demonstrates:
+
+- `#Project B4J-UI` with `#B4JDependsOn jXUI`;
+- `B4XCanvas` rendering without a Designer layout;
+- a `Timer`-based game loop;
+- mouse input through a generated XUI panel event;
+- OOP entities with `GameEntity`, `Paddle`, `Ball` and `Brick`;
+- service classes with `BreakoutGame`, `BrickGrid` and `ScoreBoard`;
+- inheritance, `Override`, `Super.Initialize`, properties and a `#StaticCode BreakoutMath` helper.
+
+Open `examples/xui-breakout` in VS Code and run `B4X++: Sync #Project` to generate the B4J UI demo project. The example folder also includes a ready-to-open B4J project under `b4x-ide-projects/B4XPPBreakout-b4j-ui/`.
 
 ## Generated file versioning
 

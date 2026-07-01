@@ -493,10 +493,31 @@ Public Sub setText(B4XPP_Value As String)
 End Sub
 ```
 
+Readable source setter use:
+
+```vb
+#Property X As Float = 0
+
+#Constructor(aX As Float)
+    X = aX
+#End Constructor
+```
+
+Generated shape:
+
+```vb
+Public Sub Initialize(aX As Float)
+    setX(aX)
+End Sub
+```
+
 Rules:
 
 - Default values are supported.
 - Use B4X-compatible generated declaration syntax.
+- Inside a class, `PropertyName = value` is B4X++ property-assignment sugar and must generate `setPropertyName(value)`. This keeps `.bx` readable because the source does not need to call generated setter names manually.
+- Prefer source parameters named `aX`, `aWidth`, `aColor`, `aGameWidth`, etc. Do not name parameters like a property, module/class, method, generated field, or reserved B4X word.
+- Unsafe parameters may be renamed in generated `.bas` to safe `aName` forms.
 - Setter parameters may be renamed internally to avoid B4X parameter/global name hiding errors.
 - `ReadOnly` generates only getter unless a custom setter is explicitly present.
 - `WriteOnly` generates only setter unless a custom getter is explicitly present.
@@ -788,6 +809,9 @@ Usually generate output, but review carefully:
 
 ## 18. IntelliSense, navigation and editor features in v0.3.3
 
+VS Code hover text should show the coding help first, then debug metadata underneath. For properties, mention that `Property = value` generates `setProperty(value)` and that safe argument names should use the `aName` convention.
+
+
 B4X++ v0.3.3 is mainly an editor-quality release. Generated `.bas` output remains compatible with v0.3.2.
 
 Supported editor behaviors:
@@ -908,13 +932,22 @@ Prefer B4J Non-UI examples for quick language testing:
 #MainModule Main
 ```
 
+Prefer B4J UI + XUI examples for visual/game testing:
+
+```vb
+#Project B4J-UI B4XPPBreakout
+#B4JDependsOn jXUI
+#MainModule Main
+```
+
 Prefer `.b4xlib` examples for component / CustomView validation.
 
-The repository includes three recommended examples for agents to reuse or test against:
+The repository includes four recommended examples for agents to reuse or test against:
 
 - `examples/basic-animal`: minimal inheritance and natural polymorphism.
 - `examples/language-showcase`: broad syntax and directive coverage.
 - `examples/oop-dungeon-arena`: heavier OOP game sample with interfaces, abstract classes, custom property accessors, `Poly` dispatch and `#StaticCode`.
+- `examples/xui-breakout`: B4J UI + XUI game sample using `B4XCanvas`, a `Timer`, mouse input, entity classes and service classes.
 
 ---
 
@@ -1043,9 +1076,10 @@ When editing the transpiler or generating major examples, keep these scenarios w
 11. Same-arity method overload diagnostic.
 12. `#StaticCode` module generation.
 13. OOP Dungeon Arena example generates without diagnostics and includes `B4XPP_Runtime.bas` because it uses `Poly`.
-14. B4XAnalogClock CustomView `.b4xlib` build without unnecessary `B4XPP_Runtime.bas`.
-15. Inherited `#DesignerProperty` and `#Event` propagation.
-16. B4J Designer color values such as `0xffffffff` handled safely.
+14. XUI Breakout example generates without diagnostics as a `B4J-UI` project and carries `#B4JDependsOn jXUI`.
+15. B4XAnalogClock CustomView `.b4xlib` build without unnecessary `B4XPP_Runtime.bas`.
+16. Inherited `#DesignerProperty` and `#Event` propagation.
+17. B4J Designer color values such as `0xffffffff` handled safely.
 
 ---
 
@@ -1067,3 +1101,22 @@ This should be implemented in the .bx source, not directly in generated .bas.
 The transpiler will flatten the parent class and rewrite Super.Initialize(...) to the generated B4XPP_Super_* method.
 After the change, run B4X++: Generate .bas Files, then B4X++: Sync #Project.
 ```
+
+
+## B4J flattening compatibility note
+
+When writing examples that rely on `#Extends`, remember that generated B4J class modules are flattened copies, not true Java/B4J subclasses. Avoid method signatures such as `Intersects(other As BaseClass)` when the call site passes a generated child class such as `Paddle` or `Brick`; B4J can emit warning #22. Prefer passing primitive rectangle/value data, using `Object` plus controlled dispatch, or exposing explicit helper methods that avoid parent-typed parameters.
+
+
+### B4X naming pitfalls for generated examples
+
+B4X is sensitive to identifiers that collide with existing modules, reserved words, or Subs in the same generated module. Example projects should avoid:
+
+- reserved words as Sub names, such as `Step`; use names like `RunTurn`;
+- local variables that match module/class names, such as `gameWorld` inside the `GameWorld` module;
+- parameters that match inherited helper Subs after flattening. In XUI Breakout, use `aBallCenterX` / `aBallCenterY` instead of `CenterX` / `CenterY` inside `Ball.ResetAt`, because `CenterX` and `CenterY` are inherited helper Subs from `GameEntity`.
+
+
+## v0.3.5 note
+
+B4X++ property assignment sugar must also be rewritten inside one-line B4X statements such as `If condition Then Property = value`. The generated B4X must use `If condition Then setProperty(value)` because classic B4X does not treat `Property = value` as a property setter inside class modules.

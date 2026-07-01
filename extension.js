@@ -324,7 +324,11 @@ async function syncDirectiveProjectCommand() {
 
   const projectConfig = {
     ...config,
-    mobileMainModuleName: result.project.mobileMainModuleName || config.mobileMainModuleName
+    mobileMainModuleName: result.project.mobileMainModuleName || config.mobileMainModuleName,
+    projectDependsOn: result.project.dependsOn || [],
+    projectB4ADependsOn: result.project.b4aDependsOn || [],
+    projectB4JDependsOn: result.project.b4jDependsOn || [],
+    projectB4iDependsOn: result.project.b4iDependsOn || []
   };
   const project = writeIdeProject(projectRoot, platform, projectName, packageName, result.outputs, projectConfig);
   writeB4XPPMetadata(root, result, projectRoot);
@@ -629,8 +633,13 @@ async function createExampleCommand() {
       value: 'game-to-src'
     },
     {
+      label: 'XUI game sample: Breakout',
+      description: `Copy into ${config.sourceDir}/ and open Demo.bx`,
+      value: 'breakout-to-src'
+    },
+    {
       label: 'Create all GitHub examples',
-      description: 'Copy basic-animal, language-showcase and oop-dungeon-arena under examples/',
+      description: 'Copy basic-animal, language-showcase, oop-dungeon-arena and xui-breakout under examples/',
       value: 'both-to-examples'
     }
   ], {
@@ -643,6 +652,7 @@ async function createExampleCommand() {
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'basic-animal', config.sourceDir), getBasicAnimalTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'language-showcase', config.sourceDir), getLanguageShowcaseTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'oop-dungeon-arena', config.sourceDir), getDungeonArenaTemplate(), root);
+    await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'xui-breakout', config.sourceDir), getBreakoutTemplate(), root);
     const readmePath = path.join(examplesRoot, 'README.md');
     if (!fs.existsSync(readmePath)) fs.writeFileSync(readmePath, getExamplesReadme(), 'utf8');
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(readmePath));
@@ -655,7 +665,9 @@ async function createExampleCommand() {
     ? getLanguageShowcaseTemplate()
     : choice.value === 'game-to-src'
       ? getDungeonArenaTemplate()
-      : getBasicAnimalTemplate();
+      : choice.value === 'breakout-to-src'
+        ? getBreakoutTemplate()
+        : getBasicAnimalTemplate();
   const sourceRoot = path.join(root, config.sourceDir);
   await writeExampleTemplateWithPrompt(sourceRoot, template, root);
   const demoPath = path.join(sourceRoot, 'Demo.bx');
@@ -1266,7 +1278,7 @@ function getDungeonArenaTemplate() {
   return {
     name: 'OOP Dungeon Arena game sample',
     files: {
-      "Demo.bx": "#Project B4J-NonUI B4XPPDungeonArena\n#Package b4xpp.examples.dungeonarena\n#ProjectDir b4x-ide-projects/B4XPPDungeonArena-b4j-nonui\n#MainModule Main\n\n#B4XLib B4XPPDungeonArena\n#Version 1.00\n#Author B4X++ Team\n#B4XLibDir b4x-libs\n#SupportedPlatforms B4A, B4J, B4i\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"contracts/IActor.bx\"\n#Include \"contracts/ICollectible.bx\"\n#Include \"core/ArenaMath.bx\"\n#Include \"core/GameObject.bx\"\n#Include \"actors/Actor.bx\"\n#Include \"actors/Hero.bx\"\n#Include \"actors/Enemy.bx\"\n#Include \"actors/Slime.bx\"\n#Include \"actors/Goblin.bx\"\n#Include \"actors/Boss.bx\"\n#Include \"items/Item.bx\"\n#Include \"items/HealthPotion.bx\"\n#Include \"items/DamageBoost.bx\"\n#Include \"services/GameWorld.bx\"\n\nSub Process_Globals\nEnd Sub\n\nSub AppStart (Args() As String)\n    Log(\"=== B4X++ OOP Dungeon Arena ===\")\n\n    Dim world As GameWorld\n    world.Initialize(8, 6)\n    world.StartDemo\nEnd Sub\n",
+      "Demo.bx": "#Project B4J-UI B4XPPBreakout\n#Package b4xpp.examples.breakout\n#ProjectDir b4x-ide-projects/B4XPPBreakout-b4j-ui\n#MainModule Main\n\n#B4XLib B4XPPBreakout\n#Version 1.00\n#Author B4X++ Team\n#B4XLibDir b4x-libs\n#SupportedPlatforms B4J\n#B4JDependsOn jXUI\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"core/BreakoutMath.bx\"\n#Include \"entities/GameEntity.bx\"\n#Include \"entities/Paddle.bx\"\n#Include \"entities/Ball.bx\"\n#Include \"entities/Brick.bx\"\n#Include \"services/BrickGrid.bx\"\n#Include \"services/ScoreBoard.bx\"\n#Include \"services/BreakoutGame.bx\"\n\nSub Process_Globals\n    Private fx As JFX\n    Private MainForm As Form\n    Private breakoutApp As BreakoutGame\n    Private gameClock As Timer\nEnd Sub\n\nSub AppStart (Form1 As Form, Args() As String)\n    MainForm = Form1\n    MainForm.Title = \"B4X++ XUI Breakout\"\n    MainForm.Resizable = False\n    MainForm.WindowWidth = 660dip\n    MainForm.WindowHeight = 540dip\n\n    Dim rootView As B4XView = MainForm.RootPane\n\n    breakoutApp.Initialize(rootView)\n    breakoutApp.StartPlay\n\n    gameClock.Initialize(\"GameClock\", 16)\n    gameClock.Enabled = True\n\n    MainForm.Show\nEnd Sub\n\nSub GameClock_Tick\n    breakoutApp.UpdateFrame\nEnd Sub\n",
       "actors/Actor.bx": "#Class Actor Abstract Extends GameObject Implements IActor\n\n#Property Health As Int = 10\n#Property MaxHealth As Int = 10\n#Property AttackPower As Int = 1\n#Property Speed As Int = 1\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int)\n    Super.Initialize(Id, Name, X, Y)\n    setMaxHealth(MaxHealth)\n    setHealth(MaxHealth)\n    setAttackPower(AttackPower)\n    setSpeed(1)\n#End Constructor\n\nPublic Sub IsAlive As Boolean\n    Return getHealth > 0\nEnd Sub\n\nPublic Sub GetPosX As Int\n    Return getX\nEnd Sub\n\nPublic Sub SetPosX(Value As Int)\n    setX(Value)\nEnd Sub\n\nPublic Sub GetPosY As Int\n    Return getY\nEnd Sub\n\nPublic Sub SetPosY(Value As Int)\n    setY(Value)\nEnd Sub\n\nVirtual Sub Team As String\n    Return \"neutral\"\nEnd Sub\n\nVirtual Sub TakeTurn(World As Object)\nEnd Sub\n\nVirtual Sub ReceiveDamage(Amount As Int, Source As Object) As String\n    Dim beforeHealth As Int = getHealth\n    setHealth(getHealth - Amount)\n    Return getName & \" takes \" & (beforeHealth - getHealth) & \" damage. HP=\" & getHealth & \"/\" & getMaxHealth\nEnd Sub\n\nVirtual Sub Attack(Target As Object) As String\n    Dim targetActor As Poly IActor\n    targetActor = Target\n    Dim targetAlive As Boolean = targetActor.IsAlive\n    If targetAlive = False Then Return getName & \" has no living target.\"\n    Return getName & \" attacks. \" & targetActor.ReceiveDamage(getAttackPower, Me)\nEnd Sub\n\nProtected Sub MoveToward(Target As Object, World As GameWorld) As String\n    Dim targetActor As Poly IActor\n    targetActor = Target\n    Dim targetX As Int = targetActor.GetPosX\n    Dim targetY As Int = targetActor.GetPosY\n    Dim dx As Int = ArenaMath.Sign(targetX - getX)\n    Dim dy As Int = ArenaMath.Sign(targetY - getY)\n    If ArenaMath.AbsI(targetX - getX) >= ArenaMath.AbsI(targetY - getY) Then\n        dy = 0\n    Else\n        dx = 0\n    End If\n    World.MoveActor(Me, dx, dy)\n    Return getName & \" moves \" & ArenaMath.DirectionLabel(dx, dy) & \" to \" & FormatPosition\nEnd Sub\n\nOverride Sub Render As String\n    Return Super.Render & \" hp=\" & getHealth & \"/\" & getMaxHealth & \" atk=\" & getAttackPower\nEnd Sub\n\n#End Class\n",
       "actors/Boss.bx": "#Class Boss Extends Enemy Final\n\n#Property Rage As Int = 0\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int)\n    Super.Initialize(Id, Name, X, Y, 25, 7, 8)\n    setRage(0)\n#End Constructor\n\nOverride Sub ReceiveDamage(Amount As Int, Source As Object) As String\n    Dim line As String = Super.ReceiveDamage(Amount, Source)\n    setRage(getRage + 1)\n    setAttackPower(7 + getRage)\n    Return line & \" Rage=\" & getRage & \", ATK=\" & getAttackPower\nEnd Sub\n\nOverride Sub Attack(Target As Object) As String\n    Return \"[Boss] \" & Super.Attack(Target)\nEnd Sub\n\nOverride Sub WarCry As String\n    Return getName & \" roars. The arena trembles.\"\nEnd Sub\n\n#End Class\n",
       "actors/Enemy.bx": "#Class Enemy Abstract Extends Actor\n\n#Property AggroRange As Int = 3\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int, AggroRange As Int)\n    Super.Initialize(Id, Name, X, Y, MaxHealth, AttackPower)\n    setAggroRange(AggroRange)\n#End Constructor\n\nOverride Sub Team As String\n    Return \"enemy\"\nEnd Sub\n\nOverride Sub TakeTurn(World As Object)\n    Dim arenaWorld As GameWorld = World\n    Dim heroTarget As Object = arenaWorld.Hero\n    Dim heroActor As Poly IActor\n    heroActor = heroTarget\n    Dim heroIsAlive As Boolean = heroActor.IsAlive\n    If IsAlive = False Or heroIsAlive = False Then Return\n\n    Dim heroX As Int = heroActor.GetPosX\n    Dim heroY As Int = heroActor.GetPosY\n    Dim distanceToHero As Int = ArenaMath.Distance(getX, getY, heroX, heroY)\n    If distanceToHero <= 1 Then\n        Log(Attack(heroTarget))\n    Else If distanceToHero <= getAggroRange Then\n        Log(MoveToward(heroTarget, arenaWorld))\n    Else\n        Log(WarCry)\n    End If\nEnd Sub\n\nProtected Virtual Sub WarCry As String\n    Return getName & \" waits in the dark.\"\nEnd Sub\n\nOverride Sub Render As String\n    Return Super.Render & \" aggro=\" & getAggroRange\nEnd Sub\n\n#End Class\n",
@@ -1275,7 +1287,7 @@ function getDungeonArenaTemplate() {
       "actors/Slime.bx": "#Class Slime Extends Enemy Final\n\n#Constructor(Id As String, X As Int, Y As Int)\n    Super.Initialize(Id, \"Slime\", X, Y, 8, 2, 4)\n#End Constructor\n\nOverride Sub Attack(Target As Object) As String\n    Return \"[Slime] \" & Super.Attack(Target)\nEnd Sub\n\nOverride Sub WarCry As String\n    Return getName & \" jiggles suspiciously.\"\nEnd Sub\n\n#End Class\n",
       "contracts/IActor.bx": "#Interface IActor\nSub TakeTurn(World As Object)\nSub IsAlive As Boolean\nSub Team As String\nSub ReceiveDamage(Amount As Int, Source As Object) As String\nSub Attack(Target As Object) As String\nSub GetPosX As Int\nSub SetPosX(Value As Int)\nSub GetPosY As Int\nSub SetPosY(Value As Int)\nSub Render As String\n#End Interface\n",
       "contracts/ICollectible.bx": "#Interface ICollectible\nSub ApplyTo(Target As Object) As String\nSub IsPicked As Boolean\nSub SameTile(TileX As Int, TileY As Int) As Boolean\nSub Render As String\n#End Interface\n",
-      "contracts/IRenderable.bx": "#Interface IRenderable\nSub Render As String\n#End Interface\n",
+      "contracts/IRenderable.bx": "#Interface IRenderable\nSub Render(Cvs As B4XCanvas)\n#End Interface\n",
       "core/ArenaMath.bx": "#StaticCode ArenaMath\n\nSub Process_Globals\nEnd Sub\n\nPublic Sub Clamp(Value As Int, MinValue As Int, MaxValue As Int) As Int\n    If Value < MinValue Then Return MinValue\n    If Value > MaxValue Then Return MaxValue\n    Return Value\nEnd Sub\n\nPublic Sub AbsI(Value As Int) As Int\n    If Value < 0 Then Return -Value\n    Return Value\nEnd Sub\n\nPublic Sub Distance(X1 As Int, Y1 As Int, X2 As Int, Y2 As Int) As Int\n    Return AbsI(X1 - X2) + AbsI(Y1 - Y2)\nEnd Sub\n\nPublic Sub Sign(Value As Int) As Int\n    If Value < 0 Then Return -1\n    If Value > 0 Then Return 1\n    Return 0\nEnd Sub\n\nPublic Sub DirectionLabel(DX As Int, DY As Int) As String\n    If DX = 0 And DY = 0 Then Return \"wait\"\n    If AbsI(DX) > AbsI(DY) Then\n        If DX > 0 Then Return \"east\"\n        Return \"west\"\n    End If\n    If DY > 0 Then Return \"south\"\n    Return \"north\"\nEnd Sub\n\n#End StaticCode\n",
       "core/GameObject.bx": "#Class GameObject Abstract Implements IRenderable\n\n#Property ReadOnly Id As String = \"\"\n#Property Name As String = \"Object\"\n#Property X As Int = 0\n#Property Y As Int = 0\n\n#Constructor(Id As String, Name As String)\n    mId = Id\n    mName = Name\n    mX = 0\n    mY = 0\n#End Constructor\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int)\n    mId = Id\n    mName = Name\n    mX = X\n    mY = Y\n#End Constructor\n\nVirtual Sub Render As String\n    Return mName & \"@\" & FormatPosition\nEnd Sub\n\nPublic Sub SameTile(TileX As Int, TileY As Int) As Boolean\n    Return mX = TileX And mY = TileY\nEnd Sub\n\nProtected Sub FormatPosition As String\n    Return \"(\" & mX & \",\" & mY & \")\"\nEnd Sub\n\n#End Class\n",
       "items/DamageBoost.bx": "#Class DamageBoost Extends Item Final\n\n#Property Amount As Int = 2\n\n#Constructor(Id As String, X As Int, Y As Int, Amount As Int)\n    Super.Initialize(Id, \"Damage Boost\", X, Y)\n    setAmount(Amount)\n#End Constructor\n\nOverride Sub ApplyTo(Target As Object) As String\n    If getPicked Then Return \"\"\n    Dim heroTarget As Hero = Target\n    setPicked(True)\n    Return heroTarget.BoostAttack(getAmount)\nEnd Sub\n\n#End Class\n",
@@ -1286,15 +1298,35 @@ function getDungeonArenaTemplate() {
   };
 }
 
+
+function getBreakoutTemplate() {
+  return {
+    name: 'XUI Breakout game sample',
+    files: {
+      "Demo.bx": "#Project B4J-UI B4XPPBreakout\n#Package b4xpp.examples.breakout\n#ProjectDir b4x-ide-projects/B4XPPBreakout-b4j-ui\n#MainModule Main\n\n#B4XLib B4XPPBreakout\n#Version 1.00\n#Author B4X++ Team\n#B4XLibDir b4x-libs\n#SupportedPlatforms B4J\n#B4JDependsOn jXUI\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"core/BreakoutMath.bx\"\n#Include \"entities/GameEntity.bx\"\n#Include \"entities/Paddle.bx\"\n#Include \"entities/Ball.bx\"\n#Include \"entities/Brick.bx\"\n#Include \"services/BrickGrid.bx\"\n#Include \"services/ScoreBoard.bx\"\n#Include \"services/BreakoutGame.bx\"\n\nSub Process_Globals\n    Private fx As JFX\n    Private MainForm As Form\n    Private breakoutApp As BreakoutGame\n    Private gameClock As Timer\nEnd Sub\n\nSub AppStart (Form1 As Form, Args() As String)\n    MainForm = Form1\n    MainForm.Title = \"B4X++ XUI Breakout\"\n    MainForm.Resizable = False\n    MainForm.WindowWidth = 660dip\n    MainForm.WindowHeight = 540dip\n\n    Dim rootView As B4XView = MainForm.RootPane\n\n    breakoutApp.Initialize(rootView)\n    breakoutApp.StartPlay\n\n    gameClock.Initialize(\"GameClock\", 16)\n    gameClock.Enabled = True\n\n    MainForm.Show\nEnd Sub\n\nSub GameClock_Tick\n    breakoutApp.UpdateFrame\nEnd Sub\n",
+      "contracts/IRenderable.bx": "#Interface IRenderable\nSub Render(Cvs As B4XCanvas)\n#End Interface\n",
+      "core/BreakoutMath.bx": "#StaticCode BreakoutMath\n\nSub Process_Globals\nEnd Sub\n\nPublic Sub ClampF(Value As Float, MinValue As Float, MaxValue As Float) As Float\n    If Value < MinValue Then Return MinValue\n    If Value > MaxValue Then Return MaxValue\n    Return Value\nEnd Sub\n\nPublic Sub AbsF(Value As Float) As Float\n    If Value < 0 Then Return -Value\n    Return Value\nEnd Sub\n\nPublic Sub Overlaps(LeftA As Float, TopA As Float, RightA As Float, BottomA As Float, LeftB As Float, TopB As Float, RightB As Float, BottomB As Float) As Boolean\n    If RightA < LeftB Then Return False\n    If LeftA > RightB Then Return False\n    If BottomA < TopB Then Return False\n    If TopA > BottomB Then Return False\n    Return True\nEnd Sub\n\nPublic Sub CenterOf(LeftValue As Float, SizeValue As Float) As Float\n    Return LeftValue + SizeValue / 2\nEnd Sub\n\n#End StaticCode\n",
+      "entities/Ball.bx": "#Class Ball Extends GameEntity Final\n\n#Property VelocityX As Float = 190\n#Property VelocityY As Float = -230\n#Property Radius As Float = 7\n\n#Constructor(aX As Float, aY As Float, aRadius As Float, aColor As Int)\n    ' The ball is stored as a rectangle but rendered as a circle.\n    Super.Initialize(aX - aRadius, aY - aRadius, aRadius * 2, aRadius * 2, aColor)\n    Radius = aRadius\n    VelocityX = 190\n    VelocityY = -230\n#End Constructor\n\nPublic Sub ResetAt(aBallCenterX As Float, aBallCenterY As Float)\n    ' Places the ball above the paddle before launch / relaunch.\n    SetPosition(aBallCenterX - getRadius, aBallCenterY - getRadius)\n    VelocityX = 190\n    VelocityY = -230\nEnd Sub\n\nPublic Sub Advance(aDeltaSeconds As Float, aBoundsWidth As Float)\n    ' Moves the ball and bounces against the left, right and top walls.\n    SetPosition(getX + getVelocityX * aDeltaSeconds, getY + getVelocityY * aDeltaSeconds)\n\n    If Left <= 0 Then\n        SetPosition(0, getY)\n        BounceX\n    Else If Right >= aBoundsWidth Then\n        SetPosition(aBoundsWidth - getWidth, getY)\n        BounceX\n    End If\n\n    If Top <= 0 Then\n        SetPosition(getX, 0)\n        BounceY\n    End If\nEnd Sub\n\nPublic Sub BounceX\n    ' Reverses horizontal movement.\n    VelocityX = -getVelocityX\nEnd Sub\n\nPublic Sub BounceY\n    ' Reverses vertical movement.\n    VelocityY = -getVelocityY\nEnd Sub\n\nPublic Sub AimFromPaddle(aPlayerPaddle As Paddle)\n    ' Changes the exit angle depending on where the ball touched the paddle.\n    Dim offset As Float = (CenterX - aPlayerPaddle.CenterX) / Max(1, aPlayerPaddle.getWidth / 2)\n    offset = BreakoutMath.ClampF(offset, -1, 1)\n    VelocityX = 260 * offset\n    VelocityY = -BreakoutMath.AbsF(getVelocityY)\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws the ball as a filled circle.\n    If getVisible = False Then Return\n    aCvs.DrawCircle(CenterX, CenterY, getRadius, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
+      "entities/Brick.bx": "#Class Brick Extends GameEntity Final\n\n#Property Points As Int = 10\n#Property Broken As Boolean = False\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int, aPoints As Int)\n    ' Brick is an entity with a score value and a broken state.\n    Super.Initialize(aX, aY, aWidth, aHeight, aColor)\n    Points = aPoints\n    Broken = False\n#End Constructor\n\nPublic Sub Hit As Int\n    ' Breaks the brick once and returns the gained score.\n    If getBroken Then Return 0\n    Broken = True\n    Visible = False\n    Return getPoints\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws a brick with a thin white border.\n    If getBroken Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\n    aCvs.DrawRect(EntityRect, 0xFFFFFFFF, False, 1dip)\nEnd Sub\n\n#End Class\n",
+      "entities/GameEntity.bx": "#Class GameEntity Abstract Implements IRenderable\n\n#Property X As Float = 0\n#Property Y As Float = 0\n#Property Width As Float = 10\n#Property Height As Float = 10\n#Property Color As Int = 0\n#Property Visible As Boolean = True\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)\n    ' Shared entity setup: B4X++ property assignment calls the generated setters.\n    X = aX\n    Y = aY\n    Width = aWidth\n    Height = aHeight\n    Color = aColor\n    Visible = True\n#End Constructor\n\nPublic Sub Left As Float\n    ' Left edge of the entity rectangle.\n    Return getX\nEnd Sub\n\nPublic Sub Top As Float\n    ' Top edge of the entity rectangle.\n    Return getY\nEnd Sub\n\nPublic Sub Right As Float\n    ' Right edge of the entity rectangle.\n    Return getX + getWidth\nEnd Sub\n\nPublic Sub Bottom As Float\n    ' Bottom edge of the entity rectangle.\n    Return getY + getHeight\nEnd Sub\n\nPublic Sub CenterX As Float\n    ' Horizontal center used by the ball and paddle logic.\n    Return BreakoutMath.CenterOf(getX, getWidth)\nEnd Sub\n\nPublic Sub CenterY As Float\n    ' Vertical center used by the ball rendering.\n    Return BreakoutMath.CenterOf(getY, getHeight)\nEnd Sub\n\nPublic Sub SetPosition(aNewX As Float, aNewY As Float)\n    ' Moves the entity without changing its size.\n    X = aNewX\n    Y = aNewY\nEnd Sub\n\nPublic Sub CollidesWithBox(aOtherLeft As Float, aOtherTop As Float, aOtherRight As Float, aOtherBottom As Float) As Boolean\n    ' Rectangle collision helper. Safer than Intersects(GameEntity) after B4X++ flattening.\n    Return BreakoutMath.Overlaps(Left, Top, Right, Bottom, aOtherLeft, aOtherTop, aOtherRight, aOtherBottom)\nEnd Sub\n\nProtected Sub EntityRect As B4XRect\n    ' Reusable rectangle for B4XCanvas drawing.\n    Dim entityArea As B4XRect\n    entityArea.Initialize(Left, Top, Right, Bottom)\n    Return entityArea\nEnd Sub\n\nVirtual Sub Render(aCvs As B4XCanvas)\n    ' Default renderer for rectangular entities.\n    If getVisible = False Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
+      "entities/Paddle.bx": "#Class Paddle Extends GameEntity Final\n\n#Property Speed As Float = 720\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)\n    ' Paddle is a specialized rectangle controlled by the mouse.\n    Super.Initialize(aX, aY, aWidth, aHeight, aColor)\n    Speed = 720\n#End Constructor\n\nPublic Sub MoveCenter(aTargetCenterX As Float, aBoundsWidth As Float)\n    ' Keeps the paddle centered under the mouse while staying inside the arena.\n    Dim newLeft As Float = aTargetCenterX - getWidth / 2\n    newLeft = BreakoutMath.ClampF(newLeft, 0, aBoundsWidth - getWidth)\n    SetPosition(newLeft, getY)\nEnd Sub\n\nPublic Sub Nudge(aDirection As Int, aDeltaSeconds As Float, aBoundsWidth As Float)\n    ' Optional keyboard-style movement helper.\n    MoveCenter(CenterX + aDirection * getSpeed * aDeltaSeconds, aBoundsWidth)\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws the paddle.\n    If getVisible = False Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
+      "services/BreakoutGame.bx": "#Class BreakoutGame Final\n\n#Property GameWidth As Float = 640\n#Property GameHeight As Float = 480\n\nSub Class_Globals\n    Private xui As XUI\n    Private mRoot As B4XView\n    Private mSurface As B4XView\n    Private mCanvas As B4XCanvas\n    Private mPaddle As Paddle\n    Private mBall As Ball\n    Private mGrid As BrickGrid\n    Private mHud As ScoreBoard\n    Private mLastTicks As Long\n    Private mReady As Boolean\nEnd Sub\n\nPublic Sub Initialize(aRoot As B4XView)\n    ' Creates the drawing surface and all game objects.\n    mRoot = aRoot\n    GameWidth = 640\n    GameHeight = 480\n\n    mSurface = xui.CreatePanel(\"GameSurface\")\n    mRoot.AddView(mSurface, 0, 0, getGameWidth, getGameHeight)\n    mCanvas.Initialize(mSurface)\n\n    mPaddle.Initialize(270dip, 420dip, 100dip, 14dip, xui.Color_RGB(250, 250, 250))\n    mBall.Initialize(320dip, 400dip, 7dip, xui.Color_RGB(255, 230, 120))\n    mGrid.Initialize(getGameWidth)\n    mHud.Initialize\n\n    mLastTicks = DateTime.Now\n    mReady = True\n    DrawFrame\nEnd Sub\n\nPublic Sub StartPlay\n    ' Starts or restarts the game after a click.\n    If mReady = False Then Return\n    If mHud.getLives <= 0 Or mGrid.getRemaining <= 0 Then ResetGame\n    mHud.setRunning(True)\n    mHud.setMessage(\"\")\n    mLastTicks = DateTime.Now\nEnd Sub\n\nPublic Sub ResetGame\n    ' Rebuilds bricks and resets the paddle / ball positions.\n    mHud.Initialize\n    mGrid.BuildLevel(getGameWidth)\n    mPaddle.MoveCenter(getGameWidth / 2, getGameWidth)\n    mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    DrawFrame\nEnd Sub\n\nPublic Sub UpdateFrame\n    ' Main frame update called by the B4J Timer.\n    If mReady = False Then Return\n    Dim nowTicks As Long = DateTime.Now\n    Dim deltaSeconds As Float = (nowTicks - mLastTicks) / 1000\n    mLastTicks = nowTicks\n    If deltaSeconds > 0.05 Then deltaSeconds = 0.05\n\n    If mHud.getRunning Then\n        mBall.Advance(deltaSeconds, getGameWidth)\n        CheckPaddleCollision\n        Dim points As Int = mGrid.CheckBallCollision(mBall)\n        If points > 0 Then mHud.AddScore(points)\n        If mGrid.getRemaining <= 0 Then mHud.WinGame\n        If mBall.Top > getGameHeight Then\n            Dim finished As Boolean = mHud.LoseLife\n            If finished = False Then mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n        End If\n    Else\n        mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    End If\n\n    DrawFrame\nEnd Sub\n\nPrivate Sub CheckPaddleCollision\n    ' Handles ball / paddle collision without typed parent casts.\n    If mBall.getVelocityY > 0 And mBall.CollidesWithBox(mPaddle.Left, mPaddle.Top, mPaddle.Right, mPaddle.Bottom) Then\n        mBall.SetPosition(mBall.getX, mPaddle.Top - mBall.getHeight - 1dip)\n        mBall.AimFromPaddle(mPaddle)\n    End If\nEnd Sub\n\nPublic Sub MovePaddle(aTargetX As Float)\n    ' Mouse movement entry point.\n    If mReady = False Then Return\n    mPaddle.MoveCenter(aTargetX, getGameWidth)\n    If mHud.getRunning = False Then mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    DrawFrame\nEnd Sub\n\nPublic Sub DrawFrame\n    ' Clears the canvas and redraws the whole scene.\n    If mReady = False Then Return\n    mCanvas.ClearRect(mCanvas.TargetRect)\n    mCanvas.DrawRect(mCanvas.TargetRect, xui.Color_RGB(22, 28, 38), True, 0)\n    mGrid.RenderAll(mCanvas)\n    mPaddle.Render(mCanvas)\n    mBall.Render(mCanvas)\n    mHud.Render(mCanvas, getGameWidth)\n    mCanvas.Invalidate\nEnd Sub\n\nPrivate Sub GameSurface_MouseMoved(aEventData As MouseEvent)\n    ' B4J event: move the paddle with the mouse.\n    MovePaddle(aEventData.X)\nEnd Sub\n\nPrivate Sub GameSurface_MousePressed(aEventData As MouseEvent)\n    ' B4J event: click to launch or restart.\n    StartPlay\nEnd Sub\n\n#End Class\n",
+      "services/BrickGrid.bx": "#Class BrickGrid Final\n\n#Property Remaining As Int = 0\n\nSub Class_Globals\n    Private xui As XUI\n    Private mBricks As List\nEnd Sub\n\nPublic Sub Initialize(aGameWidth As Float)\n    ' Prepares the brick list and builds the first level.\n    mBricks.Initialize\n    BuildLevel(aGameWidth)\nEnd Sub\n\nPublic Sub BuildLevel(aGameWidth As Float)\n    ' Creates a simple colored grid of bricks.\n    mBricks.Clear\n    Dim columns As Int = 8\n    Dim rows As Int = 5\n    Dim gap As Float = 5dip\n    Dim brickWidth As Float = (aGameWidth - gap * (columns + 1)) / columns\n    Dim brickHeight As Float = 22dip\n\n    For rowIndex = 0 To rows - 1\n        For columnIndex = 0 To columns - 1\n            Dim brickX As Float = gap + columnIndex * (brickWidth + gap)\n            Dim brickY As Float = 54dip + rowIndex * (brickHeight + gap)\n            Dim brickColor As Int\n            If rowIndex Mod 3 = 0 Then\n                brickColor = xui.Color_RGB(244, 112, 94)\n            Else If rowIndex Mod 3 = 1 Then\n                brickColor = xui.Color_RGB(255, 198, 85)\n            Else\n                brickColor = xui.Color_RGB(91, 192, 235)\n            End If\n            Dim brickItem As Brick\n            brickItem.Initialize(brickX, brickY, brickWidth, brickHeight, brickColor, 10 + rowIndex * 5)\n            mBricks.Add(brickItem)\n        Next\n    Next\n    Remaining = mBricks.Size\nEnd Sub\n\nPublic Sub RenderAll(aCvs As B4XCanvas)\n    ' Draws every brick. Broken bricks skip their own rendering.\n    For brickIndex = 0 To mBricks.Size - 1\n        Dim brickItem As Brick\n        brickItem = mBricks.Get(brickIndex)\n        brickItem.Render(aCvs)\n    Next\nEnd Sub\n\nPublic Sub CheckBallCollision(aGameBall As Ball) As Int\n    ' Returns score gained when the ball hits a brick.\n    For brickIndex = 0 To mBricks.Size - 1\n        Dim brickItem As Brick\n        brickItem = mBricks.Get(brickIndex)\n        If brickItem.getBroken = False And aGameBall.CollidesWithBox(brickItem.Left, brickItem.Top, brickItem.Right, brickItem.Bottom) Then\n            aGameBall.BounceY\n            Dim gainedPoints As Int = brickItem.Hit\n            If gainedPoints > 0 Then Remaining = getRemaining - 1\n            Return gainedPoints\n        End If\n    Next\n    Return 0\nEnd Sub\n\n#End Class\n",
+      "services/ScoreBoard.bx": "#Class ScoreBoard Final\n\n#Property Score As Int = 0\n#Property Lives As Int = 3\n#Property Running As Boolean = False\n#Property Message As String = \"Move the mouse to control the paddle. Click to launch.\"\n\nSub Class_Globals\n    Private xui As XUI\nEnd Sub\n\nPublic Sub Initialize\n    ' Resets HUD state for a new game.\n    Score = 0\n    Lives = 3\n    Running = False\n    Message = \"Move the mouse to control the paddle. Click to launch.\"\nEnd Sub\n\nPublic Sub AddScore(aPoints As Int)\n    ' Adds brick score to the total.\n    Score = getScore + aPoints\nEnd Sub\n\nPublic Sub LoseLife As Boolean\n    ' Stops the ball and returns True when the game is over.\n    Lives = getLives - 1\n    If getLives <= 0 Then\n        Running = False\n        Message = \"Game over. Click to restart.\"\n        Return True\n    End If\n    Running = False\n    Message = \"Life lost. Click to relaunch.\"\n    Return False\nEnd Sub\n\nPublic Sub WinGame\n    ' Stops the level and shows the victory message.\n    Running = False\n    Message = \"Victory! All bricks cleared. Click to restart.\"\nEnd Sub\n\nPublic Sub Render(aCvs As B4XCanvas, aGameWidth As Float)\n    ' Draws score, lives and status message.\n    aCvs.DrawText(\"Score: \" & getScore, 12dip, 25dip, xui.CreateDefaultBoldFont(16), xui.Color_White, \"LEFT\")\n    aCvs.DrawText(\"Lives: \" & getLives, aGameWidth - 12dip, 25dip, xui.CreateDefaultBoldFont(16), xui.Color_White, \"RIGHT\")\n    If getMessage.Length > 0 Then\n        aCvs.DrawText(getMessage, aGameWidth / 2, 455dip, xui.CreateDefaultFont(14), xui.Color_White, \"CENTER\")\n    End If\nEnd Sub\n\n#End Class\n"
+    }
+  };
+}
+
 function getExamplesReadme() {
   return [
     '# B4X++ Examples',
     '',
-    'This folder contains three ready-to-copy B4X++ examples:',
+    'This folder contains four ready-to-copy B4X++ examples:',
     '',
     '- `basic-animal`: a simple and familiar OOP example with `Animal`, `Dog`, `Cat` and `Bird`.',
     '- `language-showcase`: a broader sample that demonstrates most B4X++ directives and keywords.',
-    '- `oop-dungeon-arena`: a small turn-based game using heavier OOP patterns: interfaces, inheritance, abstract classes, overrides, `Super`, constructor overloads, custom property accessors, `Poly` dispatch and a `#StaticCode` helper module.',
+    '- `oop-dungeon-arena`: a small turn-based game using heavier OOP patterns: interfaces, inheritance, abstract classes, overrides, `Super`, custom property accessors, `Poly` dispatch and a `#StaticCode` helper module.',
+    '- `xui-breakout`: a B4J UI + XUI Breakout game using `B4XCanvas`, a `Timer`, mouse input, entities, services, collisions and rendering.',
     '',
     'Open one example folder in VS Code, then run:',
     '',
@@ -1303,6 +1335,22 @@ function getExamplesReadme() {
     '3. `B4X++: Build .b4xlib` to package reusable B4X components.',
     ''
   ].join('\n');
+}
+
+function getProjectLibraries(platform, config, baseLibraries) {
+  let platformSpecific = [];
+  if (platform === 'b4a') platformSpecific = Array.isArray(config.projectB4ADependsOn) ? config.projectB4ADependsOn : [];
+  else if (platform === 'b4j-ui' || platform === 'b4j-nonui') platformSpecific = Array.isArray(config.projectB4JDependsOn) ? config.projectB4JDependsOn : [];
+  else if (platform === 'b4i') platformSpecific = Array.isArray(config.projectB4iDependsOn) ? config.projectB4iDependsOn : [];
+
+  let common = Array.isArray(config.projectDependsOn) ? config.projectDependsOn : [];
+  if ((platform === 'b4j-ui' || platform === 'b4j-nonui') && platformSpecific.some(v => /^jxui$/i.test(v))) {
+    common = common.filter(v => !/^xui$/i.test(v));
+  }
+  if (platform === 'b4i' && platformSpecific.some(v => /^ixui$/i.test(v))) {
+    common = common.filter(v => !/^xui$/i.test(v));
+  }
+  return uniqueStrings([...(baseLibraries || []), ...common, ...platformSpecific]);
 }
 
 function writeIdeProject(projectRoot, platform, projectName, packageName, outputs, config) {
@@ -1323,7 +1371,7 @@ function writeIdeProject(projectRoot, platform, projectName, packageName, output
     projectContent = makeB4JProject({
       appType: 'StandardJava',
       packageName,
-      libraries: ['jcore'],
+      libraries: getProjectLibraries(platform, config, ['jcore']),
       modules: writtenModules.map(m => m.moduleName),
       mainBody: ensureB4JNonUiMain(mainBody),
       ui: false
@@ -1336,7 +1384,7 @@ function writeIdeProject(projectRoot, platform, projectName, packageName, output
     projectContent = makeB4JProject({
       appType: 'JavaFX',
       packageName,
-      libraries: ['jcore', 'jfx'],
+      libraries: getProjectLibraries(platform, config, ['jcore', 'jfx']),
       modules: writtenModules.map(m => m.moduleName),
       mainBody: ensureB4JUiMain(mainBody),
       ui: true
@@ -1349,6 +1397,7 @@ function writeIdeProject(projectRoot, platform, projectName, packageName, output
     projectContent = makeB4AProject({
       projectName,
       packageName,
+      libraries: getProjectLibraries(platform, config, ['core']),
       modules: writtenModules.map(m => m.moduleName),
       mobileMainName: mainOutput ? mobileMainName : null
     });
@@ -1360,6 +1409,7 @@ function writeIdeProject(projectRoot, platform, projectName, packageName, output
     projectContent = makeB4IProject({
       projectName,
       packageName,
+      libraries: getProjectLibraries(platform, config, ['icore']),
       modules: writtenModules.map(m => m.moduleName),
       mobileMainName: mainOutput ? mobileMainName : null
     });
@@ -1500,10 +1550,10 @@ function makeB4JProject({ appType, packageName, libraries, modules, mainBody }) 
   return design + mainBody.trim() + '\n';
 }
 
-function makeB4AProject({ projectName, packageName, modules, mobileMainName }) {
+function makeB4AProject({ projectName, packageName, libraries, modules, mobileMainName }) {
   const design = makeDesignText({
     packageName,
-    libraries: ['core'],
+    libraries: libraries || ['core'],
     modules,
     files: [],
     version: '12.0',
@@ -1544,10 +1594,10 @@ End Sub
 `;
 }
 
-function makeB4IProject({ projectName, packageName, modules, mobileMainName }) {
+function makeB4IProject({ projectName, packageName, libraries, modules, mobileMainName }) {
   const design = makeDesignText({
     packageName,
-    libraries: ['icore'],
+    libraries: libraries || ['icore'],
     modules,
     files: [],
     version: '4'
@@ -3577,12 +3627,23 @@ function v3ResolveSymbolAt(index, document, position) {
 
 function v3SymbolMarkdown(symbol) {
   const visibility = symbol.visibility ? `**Visibility:** ${symbol.visibility}\n\n` : '';
-  if (symbol.kind === 'class') return `**class ${symbol.name}**${symbol.extendsName ? ` extends ${symbol.extendsName}` : ''}\n\n${symbol.file}`;
-  if (symbol.kind === 'interface') return `**interface ${symbol.name}**\n\n${symbol.file}`;
-  if (symbol.kind === 'staticCode') return `**static module ${symbol.name}**\n\n${symbol.file}`;
-  if (symbol.kind === 'property') return `**Property ${symbol.name} As ${symbol.type || 'Object'}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
-  if (symbol.kind === 'field') return `**Field ${symbol.name} As ${symbol.type || 'Object'}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
-  if (symbol.kind === 'method') return `**Sub ${v3MethodDetail(symbol)}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
+  const debugInfo = [
+    '---',
+    '**Debug info**',
+    symbol.ownerName ? `Owner: ${symbol.ownerName}` : '',
+    symbol.file ? `File: ${symbol.file}` : '',
+    Number.isInteger(symbol.line) ? `Line: ${symbol.line + 1}` : ''
+  ].filter(Boolean).join('\n\n');
+  if (symbol.kind === 'class') return `**class ${symbol.name}**${symbol.extendsName ? ` extends ${symbol.extendsName}` : ''}\n\nB4X++ class. Edit the .bx source, then regenerate .bas when needed.\n\n${debugInfo}`;
+  if (symbol.kind === 'interface') return `**interface ${symbol.name}**\n\nContract used by B4X++ classes / Poly dispatch.\n\n${debugInfo}`;
+  if (symbol.kind === 'staticCode') return `**static module ${symbol.name}**\n\nB4X++ helper module generated as a B4X code module.\n\n${debugInfo}`;
+  if (symbol.kind === 'property') {
+    const setterHint = symbol.mode === 'readonly' ? 'This property is readonly.' : `Inside the owning class you can write **${symbol.name} = value**. The transpiler generates **set${symbol.name}(value)**.`;
+    const namingHint = `Prefer constructor / Sub parameters such as **a${symbol.name}** instead of **${symbol.name}**, **m${symbol.name}**, module names, method names, or B4X keywords.`;
+    return `**Property ${symbol.name} As ${symbol.type || 'Object'}**\n\n${setterHint}\n\n${namingHint}\n\n${visibility}${debugInfo}`;
+  }
+  if (symbol.kind === 'field') return `**Field ${symbol.name} As ${symbol.type || 'Object'}**\n\n${visibility}${debugInfo}`;
+  if (symbol.kind === 'method') return `**Sub ${v3MethodDetail(symbol)}**\n\nUse safe parameter names like **aX**, **aWidth** to avoid B4X debug/runtime ambiguities.\n\n${visibility}${debugInfo}`;
   return `**${symbol.name}**`;
 }
 

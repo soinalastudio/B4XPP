@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.5 - 2026-07-01
+
+- Fixed B4X++ property assignment sugar inside one-line `If ... Then` statements.
+- `If gainedPoints > 0 Then Remaining = getRemaining - 1` now generates `If gainedPoints > 0 Then setRemaining(getRemaining - 1)`.
+- Regenerated the XUI Breakout example and B4J project files with the inline setter fix.
+
+## 0.3.4 - 2026-07-01
+
+- Added B4X++ property assignment sugar: `Property = value` is generated as `setProperty(value)` in `.bas` files.
+- Updated VS Code hover/snippet guidance to recommend safe argument names such as `aX`, `aWidth`, `aColor`.
+- Updated the XUI Breakout example and its Create Example Project template with readable `.bx` source and clean generated `.bas` output.
+- Added tests to prevent property assignment sugar from leaking into generated B4X files.
+
+## Unreleased
+
+### Added
+- Added source-level property assignment sugar: inside a class, `PropertyName = value` is generated as `setPropertyName(value)`.
+- Added safer generated parameter renaming to `aName` when a source parameter collides with a property, method, module/class, generated field or B4X keyword.
+- Added VS Code hover help for properties that explains `Property = value` first and shows debug metadata below the help.
+- Added `examples/xui-breakout`, a B4J UI + XUI Breakout game written in B4X++ with `B4XCanvas`, a `Timer`, mouse input, OOP entities, services, collision handling and a ready-to-open B4J project.
+- Added `XUI game sample: Breakout` to `B4X++: Create Example Project`.
+
+### Changed
+- Updated the XUI Breakout source to use readable property assignments such as `X = aX` and safe argument names such as `aWidth`, with explanatory comments under constructors and Subs.
+
+### Fixed
+- `B4X++: Sync #Project` now preserves platform-specific project dependencies such as `#B4JDependsOn jXUI` when generating B4J projects.
+
 ## 0.3.3 - 2026-07-01
 
 ### Fixed
