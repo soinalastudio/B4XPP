@@ -31,11 +31,8 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, navigationProvider));
   context.subscriptions.push(vscode.languages.registerDocumentLinkProvider({ language: 'b4xpp' }, navigationProvider));
 
-  const completionProvider = new B4XPPCompletionProvider();
-  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, completionProvider, '.', ' '));
-
   const intelliSenseProvider = new B4XPPV3IntelliSenseProvider();
-  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, intelliSenseProvider, '.', ' ', '#'));
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, intelliSenseProvider, '.', ' ', '#', '=', '(', ',', '+', '-', '*', '/', '<', '>'));
   context.subscriptions.push(vscode.languages.registerHoverProvider({ language: 'b4xpp' }, intelliSenseProvider));
   context.subscriptions.push(vscode.languages.registerSignatureHelpProvider({ language: 'b4xpp' }, intelliSenseProvider, '(', ','));
   context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider({ language: 'b4xpp' }, intelliSenseProvider));
@@ -2674,8 +2671,11 @@ class B4XPPV3IntelliSenseProvider {
     const index = buildV3Index(document);
     const fileInfo = v3GetFileInfo(index, document.uri.fsPath);
     const line = document.lineAt(position.line).text;
-    const prefix = line.slice(0, position.character);
+    const rawPrefix = line.slice(0, position.character);
+    const prefix = v33CodePrefix(rawPrefix);
     const currentClass = v3FindClassAt(index, fileInfo, position.line);
+
+    if (v33IsInsideString(rawPrefix)) return [];
 
     const overrideMatch = prefix.match(/^\s*((?:Public|Private|Protected)\s+)?Override\s*$/i);
     if (overrideMatch && currentClass) return v3OverrideCompletions(index, currentClass);
@@ -2695,19 +2695,23 @@ class B4XPPV3IntelliSenseProvider {
       if (resolved) return v3MemberCompletions(index, resolved.type, { currentClass: currentClass && currentClass.name, includeProtected: false, includePrivate: false, staticOnly: resolved.staticOnly });
       const builtIn = v3BuiltinMembers(receiver, null);
       if (builtIn.length) return builtIn;
+      return [];
     }
 
-    const afterAs = /\bAs\s+(?:Poly\s+)?[A-Za-z_][A-Za-z0-9_]*$/i.test(prefix);
-    const afterNew = /\b(?:Dim|Private|Public|Protected)\s+[A-Za-z_][A-Za-z0-9_]*\s+As\s*$/i.test(prefix);
-    if (afterAs || afterNew || /\b(?:Extends|Implements|Poly)\s*$/i.test(prefix)) {
-      return v3TypeCompletions(index);
+    const ctx = v33CompletionContext(prefix);
+    if (ctx === 'directive') return v33DirectiveCompletions();
+    if (ctx === 'type') return v3TypeCompletions(index);
+    if (ctx === 'declaration') return v33DeclarationCompletions(index, currentClass);
+    if (ctx === 'member-keyword') return v33MemberDeclarationCompletions();
+
+    if (ctx === 'expression') {
+      return v33ScopeCompletions(index, fileInfo, position.line, currentClass, { includeStatementKeywords: false });
     }
 
-    return [
-      ...completionForB4XPPKeywords(),
-      ...v3TopLevelCompletions(index),
-      ...v3B4XKeywordCompletions()
-    ];
+    // Statement / normal code completion: prefer what is actually visible here.
+    // Do not return #Class / #Property / top-level types in expression-like contexts,
+    // otherwise VS Code proposes them in places such as `If x = ...`.
+    return v33ScopeCompletions(index, fileInfo, position.line, currentClass, { includeStatementKeywords: true });
   }
 
   provideHover(document, position) {
@@ -3178,6 +3182,168 @@ function v3CollectVariables(index, info, line) {
     }
   }
   return vars;
+}
+
+
+//────────────────────────────────────────────────────────────
+// B4X++ v0.3.3 scoped completion helpers
+//────────────────────────────────────────────────────────────
+function v33CodePrefix(rawPrefix) {
+  const split = splitCodeAndCommentForNavigation(rawPrefix || '');
+  return split && split.code != null ? split.code : String(rawPrefix || '');
+}
+
+function v33IsInsideString(rawPrefix) {
+  let inString = false;
+  for (let i = 0; i < String(rawPrefix || '').length; i++) {
+    const ch = rawPrefix[i];
+    if (ch === '"') inString = !inString;
+  }
+  return inString;
+}
+
+function v33CompletionContext(prefix) {
+  const p = String(prefix || '');
+  const t = p.trim();
+  if (/^#\w*$/i.test(t)) return 'directive';
+  if (/^\s*#(?:Class|Interface|StaticCode|Property|Include|Extends|Implements|MainModule|Project|B4XLib|Version|Author|SupportedPlatforms)\b/i.test(p)) return 'directive';
+  if (/\bAs\s+(?:Poly\s+)?[A-Za-z_][A-Za-z0-9_]*$/i.test(p)) return 'type';
+  if (/\b(?:Extends|Implements|Poly)\s+[A-Za-z_][A-Za-z0-9_]*$/i.test(p)) return 'type';
+  if (/\b(?:Extends|Implements|Poly)\s*$/i.test(p)) return 'type';
+  if (/\b(?:Dim|Private|Public|Protected)\s+[A-Za-z_][A-Za-z0-9_]*\s+As\s*$/i.test(p)) return 'type';
+  if (/^\s*(?:Public|Private|Protected)\s*$/i.test(p)) return 'member-keyword';
+  if (/^\s*(?:Public|Private|Protected)?\s*(?:Override|Virtual|Abstract|Final\s*)*$/i.test(p) && /\b(?:Override|Virtual|Abstract|Final)\s*$/i.test(p)) return 'declaration';
+  if (/^\s*(?:Public|Private|Protected)?\s*(?:Override|Virtual|Abstract|Final\s+)*\s*Sub\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*$/i.test(p)) return 'type';
+  if (/\b(?:If|Else\s+If|Return|Then|Until|While|Case)\b.*$/i.test(p)) return 'expression';
+  if (/[=<>+\-*/&,(]\s*[A-Za-z_][A-Za-z0-9_]*$/i.test(p) || /[=<>+\-*/&,(]\s*$/i.test(p)) return 'expression';
+  if (/\b(?:And|Or|Not)\s+[A-Za-z_][A-Za-z0-9_]*$/i.test(p)) return 'expression';
+  return 'statement';
+}
+
+function v33DirectiveCompletions() {
+  return [
+    ['#Class', 'Start a B4X++ class'],
+    ['#End Class', 'End the current B4X++ class'],
+    ['#Interface', 'Start a B4X++ interface'],
+    ['#End Interface', 'End the current B4X++ interface'],
+    ['#StaticCode', 'Start a B4X++ static module'],
+    ['#End StaticCode', 'End the current B4X++ static module'],
+    ['#Extends', 'Declare a parent class'],
+    ['#Implements', 'Declare implemented interface(s)'],
+    ['#Property', 'Generate field + getter/setter'],
+    ['#Constructor', 'Declare a B4X++ constructor'],
+    ['#Include', 'Include another .bx file'],
+    ['#MainModule', 'Declare the generated main module'],
+    ['#B4XLib', 'Declare B4XLib metadata'],
+    ['#Version', 'Declare library version'],
+    ['#Author', 'Declare library author'],
+    ['#SupportedPlatforms', 'Declare supported B4X platforms']
+  ].map(([label, detail]) => v3Completion(label, vscode.CompletionItemKind.Keyword, detail));
+}
+
+function v33MemberDeclarationCompletions() {
+  return [
+    ['Sub', 'Declare a method'],
+    ['Override Sub', 'Override a parent method'],
+    ['Virtual Sub', 'Declare an overridable method'],
+    ['Abstract Sub', 'Declare an abstract method'],
+    ['Final Sub', 'Declare a final method'],
+    ['Get', 'Declare a custom property getter'],
+    ['Set', 'Declare a custom property setter'],
+    ['#Property', 'Declare an auto property']
+  ].map(([label, detail]) => v3Completion(label, vscode.CompletionItemKind.Keyword, detail));
+}
+
+function v33DeclarationCompletions(index, currentClass) {
+  const items = [
+    ...v33MemberDeclarationCompletions(),
+    ...v33DirectiveCompletions().filter(i => /^#(?:Property|Constructor|Extends|Implements)/i.test(i.label))
+  ];
+  if (currentClass) items.push(...v3OverrideCompletions(index, currentClass));
+  return v33UniqueCompletions(items);
+}
+
+function v33ScopeCompletions(index, info, line, currentClass, options = {}) {
+  const items = [];
+  const seen = new Set();
+  const add = (item) => {
+    if (!item || !item.label) return;
+    const key = String(item.label).toLowerCase() + ':' + item.kind;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  };
+
+  const vars = v3CollectVariables(index, info, line);
+  for (const variable of vars.values()) add(v33VariableCompletion(variable));
+
+  if (currentClass) {
+    for (const found of v33VisibleMethods(index, currentClass.name)) {
+      const item = methodCompletionItem(found.method, found.owner.name);
+      item.sortText = '2_' + item.label;
+      add(item);
+    }
+    add(v3Completion('Me', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
+    add(v3Completion('This', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
+    if (currentClass.extendsName) add(v3Completion('Super', vscode.CompletionItemKind.Variable, `Parent ${currentClass.extendsName} instance`));
+  } else if (info) {
+    for (const method of info.methods.filter(m => m.ownerKind === 'module')) {
+      const item = methodCompletionItem(method, method.ownerName || path.basename(info.file, '.bx'));
+      item.sortText = '2_' + item.label;
+      add(item);
+    }
+  }
+
+  for (const mod of index.staticCodes.values()) add(v3Completion(mod.name, vscode.CompletionItemKind.Module, 'B4X++ static module'));
+  for (const lit of ['True', 'False', 'Null']) add(v3Completion(lit, vscode.CompletionItemKind.Constant, 'B4X literal'));
+  for (const kw of ['Not', 'And', 'Or']) add(v3Completion(kw, vscode.CompletionItemKind.Keyword, 'B4X expression keyword'));
+  for (const builtin of ['DateTime', 'File', 'Regex', 'Colors']) add(v3Completion(builtin, vscode.CompletionItemKind.Module, 'B4X built-in module'));
+  add(v3Completion('Log', vscode.CompletionItemKind.Function, 'B4X logging function'));
+
+  if (options.includeStatementKeywords) {
+    for (const kw of ['If', 'Then', 'Else', 'For', 'Each', 'Next', 'Return', 'Dim', 'Wait For', 'Sleep', 'Try', 'Catch', 'Select', 'Case']) {
+      add(v3Completion(kw, vscode.CompletionItemKind.Keyword, 'B4X statement'));
+    }
+  }
+  return items;
+}
+
+function v33VariableCompletion(variable) {
+  const kind = variable.kind === 'field' ? vscode.CompletionItemKind.Field : variable.kind === 'property' ? vscode.CompletionItemKind.Property : vscode.CompletionItemKind.Variable;
+  const item = new vscode.CompletionItem(variable.name, kind);
+  const type = variable.assignedType || variable.polyType || variable.type || 'Object';
+  item.detail = `${variable.name} As ${type}`;
+  item.sortText = (kind === vscode.CompletionItemKind.Variable ? '0_' : '1_') + variable.name;
+  return item;
+}
+
+function v33VisibleMethods(index, className) {
+  const out = [];
+  const seen = new Set();
+  const cls = index.classes.get(String(className || '').toLowerCase());
+  const owners = cls ? [cls, ...v3Ancestors(index, cls.name)] : [];
+  for (const owner of owners) {
+    for (const method of v3AllOwnerMethods(owner)) {
+      if (!method || /^(Class_Globals|Process_Globals)$/i.test(method.name)) continue;
+      const key = `${method.name.toLowerCase()}#${(method.params || []).length}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!v3CanAccess(index, className, owner.name, method.visibility || 'public')) continue;
+      out.push({ owner, method });
+    }
+  }
+  return out;
+}
+
+function v33UniqueCompletions(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items || []) {
+    const key = String(item.label || '').toLowerCase() + ':' + item.kind;
+    if (seen.has(key)) continue;
+    seen.add(key); out.push(item);
+  }
+  return out;
 }
 
 function v3MemberCompletions(index, typeName, options = {}) {

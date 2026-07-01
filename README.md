@@ -1,3 +1,15 @@
+## v0.3.3: Scoped IntelliSense fix
+
+B4X++ v0.3.3 improves completion inside real code blocks. Completion is now context-aware:
+
+- inside `If x = ...`, method calls and assignments, VS Code proposes current-scope variables, parameters, fields, properties and visible Subs;
+- `#Class`, `#Property`, `#Include` and other directives are suggested only in `#...` contexts;
+- classes and B4X/XUI types are suggested mainly in type positions such as `As`, `Extends`, `Implements` and `Poly`;
+- `Super.`, `This.`, `Me.` and `receiver.` member completion still uses visibility rules;
+- the legacy completion provider is no longer activated, so old generic suggestions do not mix with the v0.3 IntelliSense engine.
+
+This is an editor-quality release only. Generated B4X output remains compatible with v0.3.2.
+
 # B4X++ for Visual Studio Code
 
 

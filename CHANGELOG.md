@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.3 - 2026-07-01
+
+### Fixed
+- Reworked VS Code completion to be scope-aware in normal code and expression contexts.
+- Removed the legacy completion provider from activation so old keyword/directive suggestions no longer pollute IntelliSense.
+- Prevented `#Class`, `#Property`, type names and top-level directives from appearing while typing expressions such as `If x = ...`.
+- Added local variables, parameters, class fields, properties and visible methods to completion inside method bodies.
+- Added expression completions for `True`, `False`, `Null`, `Not`, `And`, `Or`, built-in modules and current-scope methods.
+- Kept directive completion restricted to `#...` contexts and type completion restricted to `As`, `Extends`, `Implements` and `Poly` contexts.
+
+### Notes
+- v0.3.3 is an IntelliSense quality fix. It does not change generated `.bas` output compared with v0.3.2.
+
 ## 0.3.2 - 2026-07-01
 
 ### Added
