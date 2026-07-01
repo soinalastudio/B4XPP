@@ -2,6 +2,16 @@
 
 ## 0.3.2 - 2026-07-01
 
+### Added
+- Complete navigation pass for `.bx` files: improved Go to Definition for types, local variables, fields, properties, methods, `Super`, `This` / `Me` and `#Include` targets.
+- Find References provider for B4X++ symbols.
+- Safe Rename provider for local variables, parameters, fields, properties and methods. Type / module rename remains intentionally disabled until a full workspace rename engine is added.
+- Auto Include quick fix: when a referenced class / interface / static module exists in `src-b4xpp` but is not included by the current source file, VS Code can add the correct `#Include`.
+- `B4X++: Validate B4XLib / CustomViews` command.
+- CustomView assistant diagnostics: validates `Initialize`, `DesignerCreateView`, `Base_Resize`, `mBase`, `Tag`, `#DesignerProperty` and `#Event` shape.
+- B4XLib manifest diagnostics for `#B4XLib`, `#Version`, `#Author` and `#SupportedPlatforms`.
+- Quick fix for Designer color reads to wrap `Props.Get(...)` / `Props.GetDefault(...)` with `xui.PaintOrColorToColor(...)`.
+
 ### Fixed
 - Fixed safe method overload generation when class body lines are transformed after `Class_Globals` extraction.
 - Overloaded methods without explicit `Public` / `Private` / `Protected` are now renamed correctly in generated B4X output, e.g. `Sub TestDraw()` + `Sub TestDraw(i As Int)` becomes `TestDraw` + `TestDraw2`.

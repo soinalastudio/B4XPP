@@ -1,5 +1,49 @@
 # B4X++ for Visual Studio Code
 
+
+## v0.3.2: Navigation + B4XLib / CustomView assistant
+
+This release also includes the navigation and B4XLib assistant features that were planned after v0.3.0.
+
+### Navigation
+
+- Go to Definition for classes, interfaces, static modules, fields, properties, methods, local variables and parameters.
+- Go to Definition for `Super.Method`, `This.Method`, `Me.Method` and `#Include "file.bx"`.
+- Find References for B4X++ symbols.
+- Safe Rename for local variables, parameters, fields, properties and methods. Type/module rename is intentionally not enabled yet.
+- Auto Include quick fix for existing project types that are referenced but not included in the current `.bx` file.
+
+### CustomView / B4XLib assistant
+
+Command:
+
+```text
+B4X++: Validate B4XLib / CustomViews
+```
+
+The assistant checks common CustomView and B4XLib mistakes before the code reaches B4A / B4J / B4i:
+
+- `DesignerCreateView(Base As Object, Lbl As Label, Props As Map)` presence.
+- `Initialize(Callback As Object, EventName As String)` presence.
+- `Base_Resize(Width As Double, Height As Double)` recommendation.
+- `Public mBase As B4XView` and `Public Tag As Object` compatibility hints.
+- `#DesignerProperty` syntax, duplicate keys and known `FieldType` values.
+- `#Event` syntax and parameter shape.
+- Designer color reads that should use `xui.PaintOrColorToColor(...)` or a helper.
+- `#B4XLib`, `#Version`, `#Author` and `#SupportedPlatforms` manifest hints.
+
+A quick fix is available for common Designer color reads:
+
+```vb
+mFaceColor = Props.GetDefault("FaceColor", mFaceColor)
+```
+
+can be rewritten to:
+
+```vb
+mFaceColor = xui.PaintOrColorToColor(Props.GetDefault("FaceColor", mFaceColor))
+```
+
 ## v0.3.2: Constructor / Method Overloads + IntelliSense
 
 B4X++ v0.3.2 adds source-level overloads while generating classic B4X-compatible `Initialize`, `Initialize2`, `Method`, `Method2`, ... names. IntelliSense and signature help understand these overloads.

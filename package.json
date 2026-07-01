@@ -1,7 +1,7 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.3.2: IntelliSense, semantic diagnostics, source maps, constructor / safe method overloads, B4X project sync and .b4xlib builds.",
+  "description": "VS Code extension for B4X++ v0.3.2: IntelliSense, navigation, references, rename, CustomView assistant, semantic diagnostics, source maps, overloads, project sync and .b4xlib builds.",
   "version": "0.3.2",
   "publisher": "soinala-studio",
   "license": "MIT",
@@ -92,6 +92,11 @@
       {
         "command": "b4xpp.refreshIntelliSense",
         "title": "B4X++: Refresh IntelliSense Index",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.validateB4XLibCustomViews",
+        "title": "B4X++: Validate B4XLib / CustomViews",
         "category": "B4X++"
       }
     ],

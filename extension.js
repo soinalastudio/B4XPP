@@ -40,6 +40,11 @@ function activate(context) {
   context.subscriptions.push(vscode.languages.registerSignatureHelpProvider({ language: 'b4xpp' }, intelliSenseProvider, '(', ','));
   context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider({ language: 'b4xpp' }, intelliSenseProvider));
   context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(new B4XPPV3WorkspaceSymbolProvider()));
+  context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, new B4XPPV32NavigationProvider()));
+  context.subscriptions.push(vscode.languages.registerReferenceProvider({ language: 'b4xpp' }, new B4XPPV32ReferenceProvider()));
+  context.subscriptions.push(vscode.languages.registerRenameProvider({ language: 'b4xpp' }, new B4XPPV32RenameProvider()));
+  context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: 'b4xpp' }, new B4XPPV32CodeActionProvider(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite] }));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.validateB4XLibCustomViews', validateB4XLibCustomViewsCommand));
 
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
     if (doc.languageId === 'b4xpp') validateDocument(doc);
@@ -2653,6 +2658,11 @@ function mergeV3SemanticDiagnostics(baseDiagnosticsByUri, document, root, config
       if (!merged.has(uri)) merged.set(uri, []);
       merged.get(uri).push(...diagnostics);
     }
+    const assistantExtras = collectV32CustomViewAndB4XLibDiagnostics(index);
+    for (const [uri, diagnostics] of assistantExtras.entries()) {
+      if (!merged.has(uri)) merged.set(uri, []);
+      merged.get(uri).push(...diagnostics);
+    }
   } catch (err) {
     // Never break normal transpiler diagnostics because of editor-only IntelliSense diagnostics.
   }
@@ -3409,6 +3419,371 @@ function v3BuiltinMethodSignature(receiver, methodName) {
   }
   return null;
 }
+
+
+//────────────────────────────────────────────────────────────
+// B4X++ v0.3.2 navigation + B4XLib / CustomView assistant
+//────────────────────────────────────────────────────────────
+async function validateB4XLibCustomViewsCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const editor = vscode.window.activeTextEditor;
+  const config = getConfig();
+  const index = buildV3IndexForRoot(folder.uri.fsPath, config, editor && editor.document);
+  const diagnostics = collectV32CustomViewAndB4XLibDiagnostics(index);
+  publishDiagnostics(diagnostics);
+  let errorCount = 0;
+  let warningCount = 0;
+  for (const list of diagnostics.values()) {
+    for (const d of list) {
+      if (d.severity === 'error') errorCount++; else warningCount++;
+    }
+  }
+  const message = `B4X++: CustomView / B4XLib validation finished (${errorCount} errors, ${warningCount} warnings).`;
+  if (errorCount) vscode.window.showErrorMessage(message);
+  else vscode.window.showInformationMessage(message);
+}
+
+class B4XPPV32NavigationProvider {
+  provideDefinition(document, position) {
+    const includeTarget = getIncludeTargetAt(document, position);
+    if (includeTarget) {
+      const resolved = resolveIncludeTargetForDocument(document, includeTarget.value);
+      if (resolved && fs.existsSync(resolved)) return new vscode.Location(vscode.Uri.file(resolved), new vscode.Position(0, 0));
+    }
+    const index = buildV3Index(document);
+    const symbol = v32ResolveSymbolTarget(index, document, position);
+    if (symbol && symbol.file) return toLocation(symbol);
+    return null;
+  }
+}
+
+class B4XPPV32ReferenceProvider {
+  provideReferences(document, position, context) {
+    const index = buildV3Index(document);
+    const target = v32ResolveSymbolTarget(index, document, position);
+    if (!target || !target.name) return [];
+    const files = v32ReferenceSearchFiles(index, target, document.uri.fsPath);
+    const refs = [];
+    for (const file of files) {
+      let text = '';
+      try { text = samePath(file, document.uri.fsPath) ? document.getText() : getWorkspaceText(file); } catch { continue; }
+      const lines = normalizeNewlines(text).split('\n');
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const code = splitCodeAndCommentForNavigation(lines[lineIndex]).code;
+        for (const range of v32WordRangesInLine(code, lineIndex, target.name)) {
+          if (!context || context.includeDeclaration !== false || !v32SameRange(file, range, target.file, target.range)) {
+            refs.push(new vscode.Location(vscode.Uri.file(file), range));
+          }
+        }
+      }
+    }
+    return refs;
+  }
+}
+
+class B4XPPV32RenameProvider {
+  prepareRename(document, position) {
+    const index = buildV3Index(document);
+    const target = v32ResolveSymbolTarget(index, document, position);
+    if (!target) throw new Error('B4X++: no renameable symbol here.');
+    if (['class', 'interface', 'staticCode'].includes(target.kind)) {
+      throw new Error('B4X++: workspace type rename is intentionally not enabled yet. Rename local fields, variables, methods and properties first.');
+    }
+    if (!target.range) throw new Error('B4X++: no safe rename range found.');
+    return target.range;
+  }
+
+  provideRenameEdits(document, position, newName) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName || '')) throw new Error('B4X++: invalid B4X identifier.');
+    const index = buildV3Index(document);
+    const target = v32ResolveSymbolTarget(index, document, position);
+    if (!target || ['class', 'interface', 'staticCode'].includes(target.kind)) return null;
+    const edit = new vscode.WorkspaceEdit();
+    const refs = v32ReferencesForRename(index, document, target);
+    for (const ref of refs) edit.replace(ref.uri, ref.range, newName);
+    return edit;
+  }
+}
+
+class B4XPPV32CodeActionProvider {
+  provideCodeActions(document, range) {
+    const index = buildV3Index(document);
+    const actions = [];
+    const auto = v32AutoIncludeAction(index, document, range.start);
+    if (auto) actions.push(auto);
+    const colorFix = v32DesignerColorFixAction(document, range.start);
+    if (colorFix) actions.push(colorFix);
+    return actions;
+  }
+}
+
+function v32ResolveSymbolTarget(index, document, position) {
+  const info = v3GetFileInfo(index, document.uri.fsPath);
+  const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+  if (!range || !info) return null;
+  const word = document.getText(range);
+  const local = v32ResolveLocalVariable(index, info, position.line, word, range);
+  if (local) return local;
+  const resolved = v3ResolveSymbolAt(index, document, position);
+  if (resolved) return resolved;
+  const type = index.classes.get(word.toLowerCase()) || index.interfaces.get(word.toLowerCase()) || index.staticCodes.get(word.toLowerCase());
+  if (type) return type;
+  return null;
+}
+
+function v32ResolveLocalVariable(index, info, line, word, clickedRange) {
+  const method = v3FindMethodAt(info, line);
+  if (!method) return null;
+  const key = word.toLowerCase();
+  for (const p of method.params || []) {
+    if (p.name.toLowerCase() === key) {
+      const declLine = info.lines[method.startLine] || '';
+      return { kind: 'local', name: p.name, type: p.type || '', file: info.file, line: method.startLine, startLine: method.startLine, endLine: method.endLine, range: makeWordRange(declLine, method.startLine, p.name, 0), scopeStart: method.startLine, scopeEnd: method.endLine };
+    }
+  }
+  for (let i = method.startLine; i <= Math.min(line, method.endLine); i++) {
+    const decl = parseVariableDeclarationLine(info.lines[i], i, info.file, true);
+    if (decl && decl.name.toLowerCase() === key) {
+      return { ...decl, kind: 'local', scopeStart: i, scopeEnd: method.endLine };
+    }
+  }
+  return null;
+}
+
+function v32ReferenceSearchFiles(index, target, currentFile) {
+  if (target.kind === 'local') return [target.file || currentFile];
+  if (target.visibility === 'private' && target.file) return [target.file];
+  if (target.ownerName && target.file && ['field', 'property', 'method'].includes(target.kind)) return Array.from(new Set([target.file, ...index.files]));
+  return index.files || [currentFile];
+}
+
+function v32ReferencesForRename(index, document, target) {
+  if (target.kind === 'local') {
+    const info = v3GetFileInfo(index, document.uri.fsPath);
+    const start = target.scopeStart || target.line || 0;
+    const end = target.scopeEnd || (v3FindMethodAt(info, target.line || start) || {}).endLine || start;
+    return v32FindWordLocationsInFile(document.uri.fsPath, document.getText(), target.name, start, end);
+  }
+  if (['field', 'property', 'method'].includes(target.kind)) {
+    const info = v3GetFileInfo(index, target.file || document.uri.fsPath);
+    const owner = info && (info.classes.find(c => c.name === target.ownerName) || info.staticCodes.find(s => s.name === target.ownerName) || info.interfaces.find(s => s.name === target.ownerName));
+    const start = owner ? owner.startLine : 0;
+    const end = owner ? owner.endLine : info ? info.lines.length - 1 : 999999;
+    const text = samePath(target.file || document.uri.fsPath, document.uri.fsPath) ? document.getText() : getWorkspaceText(target.file || document.uri.fsPath);
+    return v32FindWordLocationsInFile(target.file || document.uri.fsPath, text, target.name, start, end);
+  }
+  return [];
+}
+
+function v32FindWordLocationsInFile(file, text, word, startLine = 0, endLine = 999999) {
+  const out = [];
+  const lines = normalizeNewlines(text).split('\n');
+  for (let i = Math.max(0, startLine); i <= Math.min(endLine, lines.length - 1); i++) {
+    const code = splitCodeAndCommentForNavigation(lines[i]).code;
+    for (const range of v32WordRangesInLine(code, i, word)) out.push(new vscode.Location(vscode.Uri.file(file), range));
+  }
+  return out;
+}
+
+function v32WordRangesInLine(line, lineIndex, word) {
+  const out = [];
+  if (!word) return out;
+  const re = new RegExp(`\\b${v32EscapeRegExp(word)}\\b`, 'gi');
+  let m;
+  while ((m = re.exec(line))) out.push(new vscode.Range(lineIndex, m.index, lineIndex, m.index + m[0].length));
+  return out;
+}
+
+function v32SameRange(fileA, rangeA, fileB, rangeB) {
+  return fileA && fileB && samePath(fileA, fileB) && rangeA && rangeB && rangeA.start.line === rangeB.start.line && rangeA.start.character === rangeB.start.character && rangeA.end.character === rangeB.end.character;
+}
+
+function v32EscapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+function v32AutoIncludeAction(index, document, position) {
+  const line = document.lineAt(position.line).text;
+  const typeName = v32TypeNameAtPosition(line, position.character);
+  if (!typeName) return null;
+  const symbol = index.classes.get(typeName.toLowerCase()) || index.interfaces.get(typeName.toLowerCase()) || index.staticCodes.get(typeName.toLowerCase());
+  if (!symbol || samePath(symbol.file, document.uri.fsPath)) return null;
+  if (v32DocumentHasIncludeFor(document, symbol.file)) return null;
+  const root = index.sourceRoot && fs.existsSync(index.sourceRoot) ? index.sourceRoot : path.dirname(document.uri.fsPath);
+  let rel = path.relative(path.dirname(document.uri.fsPath), symbol.file).replace(/\\/g, '/');
+  if (!rel.startsWith('.')) rel = './' + rel;
+  const action = new vscode.CodeAction(`Add #Include "${rel}"`, vscode.CodeActionKind.QuickFix);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(document.uri, new vscode.Position(v32IncludeInsertLine(document), 0), `#Include "${rel}"\n`);
+  action.edit = edit;
+  action.isPreferred = true;
+  return action;
+}
+
+function v32TypeNameAtPosition(line, character) {
+  const before = line.slice(0, character);
+  const after = line.slice(character);
+  const text = before + after;
+  const candidates = [];
+  const patterns = [
+    /\bAs\s+(?:Poly\s+)?([A-Za-z_][A-Za-z0-9_]*)/ig,
+    /\bExtends\s+([A-Za-z_][A-Za-z0-9_]*)/ig,
+    /\bImplements\s+([A-Za-z_][A-Za-z0-9_]*)/ig,
+    /\bPoly\s+([A-Za-z_][A-Za-z0-9_]*)/ig
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(text))) candidates.push({ name: m[1], start: m.index + m[0].lastIndexOf(m[1]), end: m.index + m[0].lastIndexOf(m[1]) + m[1].length });
+  }
+  const hit = candidates.find(c => character >= c.start && character <= c.end);
+  return hit && hit.name;
+}
+
+function v32DocumentHasIncludeFor(document, targetFile) {
+  const dir = path.dirname(document.uri.fsPath);
+  for (let i = 0; i < document.lineCount; i++) {
+    const text = document.lineAt(i).text;
+    const m = text.match(/^\s*#Include\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+    if (!m) continue;
+    const raw = m[1] || m[2] || m[3];
+    const resolved = path.resolve(dir, raw);
+    if (samePath(resolved, targetFile)) return true;
+  }
+  return false;
+}
+
+function v32IncludeInsertLine(document) {
+  let lastDirective = 0;
+  for (let i = 0; i < Math.min(document.lineCount, 80); i++) {
+    const t = document.lineAt(i).text.trim();
+    if (/^#(?:Project|Package|ProjectDir|MainModule|B4XLib|Version|Author|SupportedPlatforms|DependsOn|B4A|B4J|B4i|Include)\b/i.test(t)) lastDirective = i + 1;
+    else if (t && !t.startsWith("'")) break;
+  }
+  return lastDirective;
+}
+
+function v32DesignerColorFixAction(document, position) {
+  const line = document.lineAt(position.line).text;
+  if (!/Props\.Get(?:Default)?\s*\(\s*"[A-Za-z_][A-Za-z0-9_]*Color[A-Za-z0-9_]*"/i.test(line)) return null;
+  if (/PaintOrColorToColor|DesignerColor/i.test(line)) return null;
+  const action = new vscode.CodeAction('Wrap Designer color read with xui.PaintOrColorToColor(...)', vscode.CodeActionKind.QuickFix);
+  const fixed = line.replace(/Props\.(Get(?:Default)?)\s*\((.+)\)/i, 'xui.PaintOrColorToColor(Props.$1($2))');
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, new vscode.Range(position.line, 0, position.line, line.length), fixed);
+  action.edit = edit;
+  return action;
+}
+
+function collectV32CustomViewAndB4XLibDiagnostics(index) {
+  const out = new Map();
+  const add = (file, line, severity, message) => {
+    const uri = vscode.Uri.file(file).toString();
+    if (!out.has(uri)) out.set(uri, []);
+    out.get(uri).push({ severity, line: Math.max(1, line + 1), message });
+  };
+  for (const info of index.fileInfos.values()) {
+    v32ValidateManifestDirectives(info, add);
+    v32ValidateDesignerDirectives(info, add);
+    for (const cls of info.classes) v32ValidateCustomViewClass(index, info, cls, add);
+  }
+  return out;
+}
+
+function v32ValidateManifestDirectives(info, add) {
+  const directives = new Map();
+  for (let i = 0; i < info.lines.length; i++) {
+    const code = splitCodeAndCommentForNavigation(info.lines[i]).code.trim();
+    const m = code.match(/^#(B4XLib|Version|Author|SupportedPlatforms|DependsOn|B4JDependsOn|B4ADependsOn|B4iDependsOn)\b\s*(.*)$/i);
+    if (m && !directives.has(m[1].toLowerCase())) directives.set(m[1].toLowerCase(), { value: (m[2] || '').trim(), line: i });
+  }
+  const lib = directives.get('b4xlib');
+  if (!lib) return;
+  if (!lib.value) add(info.file, lib.line, 'error', '#B4XLib must specify a library name.');
+  const version = directives.get('version');
+  if (!version) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #Version, for example #Version 0.30.');
+  else if (!/^\d+(?:\.\d+){0,2}$/.test(version.value)) add(info.file, version.line, 'warning', `#Version should use a B4X-friendly numeric format, for example 0.30. Current value: ${version.value}`);
+  if (!directives.get('author')) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #Author.');
+  const platforms = directives.get('supportedplatforms');
+  if (platforms && !/\bB4A\b|\bB4J\b|\bB4i\b/i.test(platforms.value)) add(info.file, platforms.line, 'warning', '#SupportedPlatforms should list at least one of B4A, B4J, B4i.');
+}
+
+function v32ValidateDesignerDirectives(info, add) {
+  const designerKeys = new Map();
+  for (let i = 0; i < info.lines.length; i++) {
+    const line = splitCodeAndCommentForNavigation(info.lines[i]).code.trim();
+    if (/^#DesignerProperty\b/i.test(line)) {
+      const fields = v32ParseDirectiveFields(line);
+      const key = fields.get('key');
+      const ft = fields.get('fieldtype');
+      if (!key) add(info.file, i, 'error', '#DesignerProperty is missing Key.');
+      else if (designerKeys.has(key.toLowerCase())) add(info.file, i, 'warning', `Duplicate #DesignerProperty Key: ${key}.`);
+      else designerKeys.set(key.toLowerCase(), i);
+      if (!ft) add(info.file, i, 'error', `#DesignerProperty ${key || ''} is missing FieldType.`);
+      else if (!v32KnownDesignerFieldType(ft)) add(info.file, i, 'warning', `Unknown DesignerProperty FieldType '${ft}'.`);
+      if (/^Color$/i.test(ft || '') && !fields.has('defaultvalue')) add(info.file, i, 'warning', `Color DesignerProperty ${key || ''} should include DefaultValue.`);
+    }
+    if (/^#Event\b/i.test(line)) {
+      const m = line.match(/^#Event\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*$/i);
+      if (!m) add(info.file, i, 'error', '#Event syntax should be: #Event: EventName (Arg As Type, ...).');
+      else if (m[2]) {
+        for (const param of m[2].split(',')) {
+          if (param.trim() && !/^[A-Za-z_][A-Za-z0-9_]*\s+As\s+[A-Za-z_][A-Za-z0-9_\.]*$/i.test(param.trim())) add(info.file, i, 'warning', `#Event parameter should use 'Name As Type': ${param.trim()}`);
+        }
+      }
+    }
+  }
+}
+
+function v32ValidateCustomViewClass(index, info, cls, add) {
+  const hasDesigner = v32ClassHasLine(info, cls, /^#DesignerProperty\b/i) || v32ClassHasLine(info, cls, /^#Event\b/i);
+  const hasDesignerCreateView = v32OwnerHasMethod(cls, 'DesignerCreateView');
+  const hasBaseResize = v32OwnerHasMethod(cls, 'Base_Resize');
+  const hasMBase = cls.fields.has('mbase') || v32ClassMentions(info, cls, /\bmBase\b/i);
+  if (!hasDesigner && !hasDesignerCreateView && !hasMBase) return;
+  if (!v32OwnerHasMethod(cls, 'Initialize')) add(cls.file, cls.line, 'error', `CustomView class ${cls.name} should expose Public Sub Initialize(Callback As Object, EventName As String).`);
+  if (!hasDesignerCreateView) add(cls.file, cls.line, 'error', `CustomView class ${cls.name} should expose DesignerCreateView(Base As Object, Lbl As Label, Props As Map).`);
+  if (!hasBaseResize) add(cls.file, cls.line, 'warning', `CustomView class ${cls.name} should usually expose Base_Resize(Width As Double, Height As Double).`);
+  const mBase = cls.fields.get('mbase');
+  if (mBase && (mBase.visibility || '').toLowerCase() !== 'public') add(mBase.file, mBase.line, 'warning', 'CustomView mBase is usually Public mBase As B4XView for Designer compatibility.');
+  const tag = cls.fields.get('tag');
+  if (tag && (tag.visibility || '').toLowerCase() !== 'public') add(tag.file, tag.line, 'warning', 'CustomView Tag is usually Public Tag As Object for Designer compatibility.');
+  const dcv = v32OwnerFirstMethod(cls, 'DesignerCreateView');
+  if (dcv) {
+    const params = dcv.params || [];
+    if (params.length < 3) add(dcv.file, dcv.line, 'warning', 'DesignerCreateView should normally have Base As Object, Lbl As Label, Props As Map.');
+  }
+}
+
+function v32ParseDirectiveFields(line) {
+  const out = new Map();
+  const after = String(line).replace(/^#DesignerProperty\s*:\s*/i, '');
+  for (const part of after.split(',')) {
+    const m = part.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+    if (m) out.set(m[1].toLowerCase(), m[2].trim());
+  }
+  return out;
+}
+
+function v32KnownDesignerFieldType(ft) {
+  return /^(String|Int|Float|Double|Boolean|Color|List|Text|MultilineText|Bitmap|File|Font|Separator)$/i.test(String(ft || '').trim());
+}
+
+function v32ClassHasLine(info, cls, regex) {
+  for (let i = cls.startLine; i <= cls.endLine && i < info.lines.length; i++) if (regex.test(splitCodeAndCommentForNavigation(info.lines[i]).code.trim())) return true;
+  return false;
+}
+function v32ClassMentions(info, cls, regex) {
+  for (let i = cls.startLine; i <= cls.endLine && i < info.lines.length; i++) if (regex.test(splitCodeAndCommentForNavigation(info.lines[i]).code)) return true;
+  return false;
+}
+function v32OwnerHasMethod(owner, name) { return !!v32OwnerFirstMethod(owner, name); }
+function v32OwnerFirstMethod(owner, name) {
+  const methods = v3OwnerMethodsByName(owner, String(name || '').toLowerCase());
+  return methods && methods[0];
+}
+
 
 const B4X_V3_TYPES = new Map([
   'string','int','long','float','double','boolean','object','list','map','b4xview','b4xcanvas','xui','bitmap','b4xbitmap','rect','b4xrect','b4xfont','resumablesub','label','button','pane','form','timer','jfx','javaobject','inputstream','outputstream','stringbuilder','color','paint','image','scrollview'
