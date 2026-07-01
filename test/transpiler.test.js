@@ -253,3 +253,58 @@ assert(computedContent.includes('Public Sub getIsReady As Boolean'), 'Manual com
 assert(computedContent.includes('Private Sub setDebugName(Name As String)'), 'Manual private setter must generate a Private setDebugName');
 
 console.log('B4X++ v0.2.1 custom property accessor tests OK');
+
+const overloadResult = transpileText(path.join(__dirname, 'OverloadDemo.bx'), `#Class Person
+#Constructor
+#End Constructor
+#Constructor(Name As String)
+#End Constructor
+#Constructor(Name As String, Age As Int)
+#End Constructor
+Public Sub Label As String
+    Return "person"
+End Sub
+Public Sub Label(Prefix As String) As String
+    Return Prefix
+End Sub
+#End Class
+#Class Student Extends Person
+#Constructor(Name As String)
+    Super.Initialize(Name)
+#End Constructor
+Public Sub Test As String
+    Return Super.Label("student")
+End Sub
+#End Class
+#MainModule Main
+Sub AppStart(Args() As String)
+    Dim p As Person
+    p.Initialize
+    p.Initialize("Jane")
+    p.Initialize("Jane", 12)
+    Log(p.Label)
+    Log(p.Label("Ms."))
+End Sub`, { addGeneratedHeader: false, mainModuleName: 'Main' });
+assert.strictEqual(overloadResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Constructor and safe method overloads should not produce errors');
+const personContent = overloadResult.outputs.find(o => o.fileName === 'Person.bas').content;
+assert(personContent.includes('Public Sub Initialize'), 'First constructor must generate Initialize');
+assert(personContent.includes('Public Sub Initialize2(Name As String)'), 'Second constructor must generate Initialize2');
+assert(personContent.includes('Public Sub Initialize3(Name As String, Age As Int)'), 'Third constructor must generate Initialize3');
+assert(personContent.includes('Public Sub Label2(Prefix As String) As String'), 'Second method overload must generate suffix 2');
+const mainContent = overloadResult.outputs.find(o => o.fileName === 'Main.bas').content;
+assert(mainContent.includes('p.Initialize2("Jane")'), 'Constructor call with one arg must rewrite to Initialize2');
+assert(mainContent.includes('p.Initialize3("Jane", 12)'), 'Constructor call with two args must rewrite to Initialize3');
+assert(mainContent.includes('p.Label2("Ms.")'), 'Overloaded method call with one arg must rewrite to Label2');
+const studentContent = overloadResult.outputs.find(o => o.fileName === 'Student.bas').content;
+assert(studentContent.includes('B4XPP_Super_Person_Initialize2(Name)'), 'Super.Initialize(Name) must resolve to parent Initialize2');
+assert(studentContent.includes('B4XPP_Super_Person_Label2("student")'), 'Super.Label(one arg) must resolve to parent overload Label2');
+
+const ambiguousOverload = transpileText(path.join(__dirname, 'AmbiguousOverload.bx'), `#Class Ambiguous
+Public Sub SetValue(Value As String)
+End Sub
+Public Sub SetValue(Value As Int)
+End Sub
+#End Class`, { addGeneratedHeader: false });
+assert(ambiguousOverload.diagnostics.some(d => d.severity === 'error' && /Ambiguous overload/i.test(d.message)), 'Same-arity method overloads must be rejected until type-based resolution is implemented');
+
+console.log('B4X++ v0.3.1 overload tests OK');

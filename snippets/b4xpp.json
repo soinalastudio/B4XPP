@@ -299,5 +299,27 @@
       "End Set"
     ],
     "description": "Create a #Property with custom getter and setter"
+  },
+  "B4X++ Constructor Overload": {
+    "prefix": "constructor-overload",
+    "body": [
+      "#Constructor(${1:Name As String})",
+      "\t${2:' TODO}",
+      "#End Constructor"
+    ],
+    "description": "Declare a B4X++ constructor overload. Multiple constructors generate Initialize / Initialize2 / Initialize3 in B4X."
+  },
+  "B4X++ Safe Method Overload": {
+    "prefix": "method-overload",
+    "body": [
+      "Public Sub ${1:MethodName}(${2:Arg As String})${3: As String}",
+      "\t${4:' TODO}",
+      "End Sub",
+      "",
+      "Public Sub ${1:MethodName}(${2:Arg As String}, ${5:Format As String})${3: As String}",
+      "\t${6:' TODO}",
+      "End Sub"
+    ],
+    "description": "Declare safe B4X++ method overloads with different parameter counts."
   }
 }

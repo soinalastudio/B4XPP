@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1 - Constructor and safe method overloads
+
+This release adds B4X++-level overloads while keeping generated B4X compatible with classic B4X naming conventions.
+
+### Added
+- Multiple `#Constructor(...)` declarations in the same class.
+- Automatic generation of `Initialize`, `Initialize2`, `Initialize3`, ... when a class has overloaded constructors.
+- Call-site rewriting for constructor overloads, for example `p.Initialize("Jane", 12)` -> `p.Initialize3("Jane", 12)`.
+- `Super.Initialize(...)` overload resolution during flattening, including calls to generated parent methods such as `B4XPP_Super_Animal_Initialize2(...)`.
+- Safe method overloads when overloads have different parameter counts. Generated B4X methods use suffixes: `SetValue`, `SetValue2`, `SetValue3`, ...
+- Call-site rewriting for safe method overloads based on argument count.
+- IntelliSense signature help now shows all overload signatures for constructors and methods.
+- Completion / hover keeps the source-facing method name while showing overload signatures.
+- Semantic diagnostics for ambiguous same-arity overloads. Type-based overload resolution is intentionally deferred.
+
+### Notes
+- v0.3.1 resolves overloads by parameter count only. `Sub SetValue(Value As String)` and `Sub SetValue(Value As Int)` are reported as ambiguous because both have one parameter.
+- All v0.1, v0.2.x and v0.3.0 features remain available.
+
 ## 0.3.0 - Language intelligence
 
 This release starts the B4X++ IntelliSense track. It keeps all v0.1, v0.2, v0.2.1 and v0.2.2 features intact and focuses on making `.bx` editing feel closer to a real B4X development environment.

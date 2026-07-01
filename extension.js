@@ -2719,21 +2719,17 @@ class B4XPPV3IntelliSenseProvider {
     let methods = [];
     if (parsed.receiver) {
       if (/^Super$/i.test(parsed.receiver) && currentClass && currentClass.extendsName) {
-        const found = v3FindMethodInClass(index, currentClass.extendsName, parsed.name, { includeAncestors: true, skipPrivate: true });
-        if (found) methods.push(found);
+        methods.push(...v3FindMethodsInClass(index, currentClass.extendsName, parsed.name, { includeAncestors: true, skipPrivate: true }));
       } else if (/^(This|Me)$/i.test(parsed.receiver) && currentClass) {
-        const found = v3FindMethodInClass(index, currentClass.name, parsed.name, { includeAncestors: true });
-        if (found) methods.push(found);
+        methods.push(...v3FindMethodsInClass(index, currentClass.name, parsed.name, { includeAncestors: true }));
       } else {
         const resolved = v3ResolveReceiverType(index, fileInfo, position.line, parsed.receiver);
         if (resolved) {
-          const found = v3FindMethodInType(index, resolved.type, parsed.name);
-          if (found) methods.push(found);
+          methods.push(...v3FindMethodsInType(index, resolved.type, parsed.name));
         }
       }
     } else if (currentClass) {
-      const found = v3FindMethodInClass(index, currentClass.name, parsed.name, { includeAncestors: true });
-      if (found) methods.push(found);
+      methods.push(...v3FindMethodsInClass(index, currentClass.name, parsed.name, { includeAncestors: true }));
     }
     const builtin = v3BuiltinMethodSignature(parsed.receiver, parsed.name);
     if (builtin) methods.push(builtin);
@@ -2749,8 +2745,13 @@ class B4XPPV3IntelliSenseProvider {
       sig.parameters = params.map(p => new vscode.ParameterInformation(`${p.name}${p.type ? ' As ' + p.type : ''}`));
       help.signatures.push(sig);
     }
-    help.activeSignature = 0;
-    help.activeParameter = Math.min(parsed.argumentIndex, Math.max(0, (help.signatures[0].parameters || []).length - 1));
+    const bestIndex = methods.findIndex(found => {
+      const m = found.method || found;
+      const params = m.params || v3ParseParams(m.paramsRaw || '');
+      return params.length >= parsed.argumentIndex + 1;
+    });
+    help.activeSignature = bestIndex >= 0 ? bestIndex : 0;
+    help.activeParameter = Math.min(parsed.argumentIndex, Math.max(0, (help.signatures[help.activeSignature].parameters || []).length - 1));
     return help;
   }
 
@@ -2898,7 +2899,7 @@ function v3ParseFile(file, text) {
     if (getterSetter && owner) {
       closeMethod(i - 1);
       method = getterSetter.method;
-      owner.methods.set(method.name.toLowerCase(), method);
+      v3OwnerAddMethod(owner, method);
       info.methods.push(method);
       const propName = getterSetter.property.name.toLowerCase();
       const old = owner.properties.get(propName) || getterSetter.property;
@@ -2913,7 +2914,7 @@ function v3ParseFile(file, text) {
       closeMethod(i - 1);
       method = methodSig;
       info.methods.push(method);
-      if (owner) owner.methods.set(method.name.toLowerCase(), method);
+      if (owner) v3OwnerAddMethod(owner, method);
       inGlobals = /^(Class_Globals|Process_Globals)$/i.test(method.name);
       continue;
     }
@@ -2929,7 +2930,16 @@ function v3ParseFile(file, text) {
 }
 
 function v3MakeOwner(kind, name, raw, line, file) {
-  return { kind, name, file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length), methods: new Map(), properties: new Map(), fields: new Map(), implementsNames: [], modifiers: [] };
+  return { kind, name, file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length), methods: new Map(), methodOverloads: new Map(), properties: new Map(), fields: new Map(), implementsNames: [], modifiers: [] };
+}
+
+function v3OwnerAddMethod(owner, method) {
+  if (!owner || !method) return;
+  const key = String(method.name || '').toLowerCase();
+  if (!owner.methods.has(key)) owner.methods.set(key, method);
+  if (!owner.methodOverloads) owner.methodOverloads = new Map();
+  if (!owner.methodOverloads.has(key)) owner.methodOverloads.set(key, []);
+  owner.methodOverloads.get(key).push(method);
 }
 
 function v3ParsePropertyLine(raw, line, file, owner) {
@@ -3025,6 +3035,7 @@ function collectV3SemanticDiagnostics(index) {
     }
     for (const cls of info.classes) {
       if (cls.extendsName && !index.classes.has(cls.extendsName.toLowerCase())) add(cls.file, cls.line, 'error', `Parent class not found: ${cls.extendsName}.`);
+      v3CollectOverloadDiagnosticsForOwner(cls, add);
       for (const name of cls.implementsNames || []) if (!index.interfaces.has(name.toLowerCase())) add(cls.file, cls.line, 'error', `Interface not found: ${name}.`);
       const seen = new Set();
       let cur = cls;
@@ -3042,6 +3053,7 @@ function collectV3SemanticDiagnostics(index) {
         }
       }
     }
+    for (const mod of info.staticCodes) v3CollectOverloadDiagnosticsForOwner(mod, add);
     for (let i = 0; i < info.lines.length; i++) {
       const raw = info.lines[i];
       const code = splitCodeAndCommentForNavigation(raw).code;
@@ -3081,6 +3093,19 @@ function v3SameSignature(a, b) {
   if ((a.returnType || '').toLowerCase() !== (b.returnType || '').toLowerCase()) return false;
   for (let i = 0; i < ap.length; i++) if ((ap[i].type || '').toLowerCase() !== (bp[i].type || '').toLowerCase()) return false;
   return true;
+}
+
+function v3CollectOverloadDiagnosticsForOwner(owner, add) {
+  if (!owner || !owner.methodOverloads) return;
+  for (const methods of owner.methodOverloads.values()) {
+    if (!methods || methods.length <= 1) continue;
+    const byArity = new Map();
+    for (const method of methods) {
+      const arity = (method.params || []).length;
+      if (byArity.has(arity)) add(method.file, method.line, 'error', `Ambiguous overload: ${owner.name}.${method.name} has more than one overload with ${arity} parameter(s). v0.3.1 resolves overloads by parameter count only.`);
+      else byArity.set(arity, method);
+    }
+  }
 }
 
 function v3CanAccess(index, currentClassName, ownerClassName, visibility) {
@@ -3178,7 +3203,7 @@ function v3MemberCompletions(index, typeName, options = {}) {
   for (const owner of owners) {
     for (const prop of owner.properties.values()) addProp(prop, owner);
     if (!options.staticOnly) for (const field of owner.fields.values()) addField(field, owner);
-    for (const method of owner.methods.values()) addMethod(method, owner);
+    for (const method of v3AllOwnerMethods(owner)) addMethod(method, owner);
   }
   if (!items.length) items.push(...v3BuiltinMembers('', typeName));
   return items;
@@ -3201,8 +3226,8 @@ function v3OverrideCompletions(index, cls) {
   const out = [];
   const seen = new Set();
   for (const parent of v3Ancestors(index, cls.name)) {
-    for (const m of parent.methods.values()) {
-      const key = m.name.toLowerCase(); if (seen.has(key)) continue; seen.add(key);
+    for (const m of v3AllOwnerMethods(parent)) {
+      const key = `${m.name.toLowerCase()}#${(m.params || []).length}`; if (seen.has(key)) continue; seen.add(key);
       if (m.visibility === 'private') continue;
       if (m.modifiers.includes('final')) continue;
       if (!m.modifiers.some(x => ['virtual', 'abstract', 'override'].includes(x))) continue;
@@ -3215,6 +3240,16 @@ function v3OverrideCompletions(index, cls) {
   return out;
 }
 
+function v3AllOwnerMethods(owner) {
+  if (!owner) return [];
+  if (owner.methodOverloads && owner.methodOverloads.size) {
+    const out = [];
+    for (const list of owner.methodOverloads.values()) out.push(...list);
+    return out;
+  }
+  return Array.from((owner.methods || new Map()).values());
+}
+
 function v3FindMethodInType(index, typeName, methodName) {
   const cls = index.classes.get(String(typeName || '').toLowerCase());
   if (cls) return v3FindMethodInClass(index, cls.name, methodName, { includeAncestors: true });
@@ -3223,6 +3258,17 @@ function v3FindMethodInType(index, typeName, methodName) {
   const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
   if (stat && stat.methods.has(String(methodName || '').toLowerCase())) return { owner: stat, method: stat.methods.get(String(methodName || '').toLowerCase()) };
   return null;
+}
+
+function v3FindMethodsInType(index, typeName, methodName) {
+  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  if (cls) return v3FindMethodsInClass(index, cls.name, methodName, { includeAncestors: true });
+  const key = String(methodName || '').toLowerCase();
+  const intf = index.interfaces.get(String(typeName || '').toLowerCase());
+  if (intf) return v3OwnerMethodsByName(intf, key).map(method => ({ owner: intf, method }));
+  const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
+  if (stat) return v3OwnerMethodsByName(stat, key).map(method => ({ owner: stat, method }));
+  return [];
 }
 
 function v3FindMemberInType(index, typeName, memberName) {
@@ -3247,6 +3293,30 @@ function v3FindMethodInClass(index, className, methodName, opts = {}) {
   const key = String(methodName || '').toLowerCase();
   for (const owner of owners) if (owner.methods.has(key)) return { owner, method: owner.methods.get(key) };
   return null;
+}
+
+function v3OwnerMethodsByName(owner, key) {
+  if (!owner) return [];
+  const k = String(key || '').toLowerCase();
+  if (owner.methodOverloads && owner.methodOverloads.has(k)) return owner.methodOverloads.get(k);
+  if (owner.methods && owner.methods.has(k)) return [owner.methods.get(k)];
+  return [];
+}
+
+function v3FindMethodsInClass(index, className, methodName, opts = {}) {
+  const cls = index.classes.get(String(className || '').toLowerCase());
+  if (!cls) return [];
+  const owners = [cls]; if (opts.includeAncestors) owners.push(...v3Ancestors(index, cls.name));
+  const key = String(methodName || '').toLowerCase();
+  const out = [];
+  for (const owner of owners) {
+    for (const method of v3OwnerMethodsByName(owner, key)) {
+      if (opts.skipPrivate && method.visibility === 'private') continue;
+      out.push({ owner, method });
+    }
+    if (out.length) break;
+  }
+  return out;
 }
 
 function v3FindAncestorMethod(index, className, methodName) {

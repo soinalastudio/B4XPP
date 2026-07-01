@@ -1,5 +1,72 @@
 # B4X++ for Visual Studio Code
 
+## v0.3.1: Constructor / Method Overloads + IntelliSense
+
+B4X++ v0.3.1 adds source-level overloads while generating classic B4X-compatible `Initialize`, `Initialize2`, `Method`, `Method2`, ... names. IntelliSense and signature help understand these overloads.
+
+### Constructor overloading
+
+```vb
+#Class Person
+
+#Constructor
+#End Constructor
+
+#Constructor(Name As String)
+#End Constructor
+
+#Constructor(Name As String, Age As Int)
+#End Constructor
+
+#End Class
+```
+
+Generated B4X uses:
+
+```vb
+Public Sub Initialize
+End Sub
+
+Public Sub Initialize2(Name As String)
+End Sub
+
+Public Sub Initialize3(Name As String, Age As Int)
+End Sub
+```
+
+Calls are rewritten automatically:
+
+```vb
+p.Initialize("Jane")      ' -> p.Initialize2("Jane")
+p.Initialize("Jane", 12)  ' -> p.Initialize3("Jane", 12)
+```
+
+`Super.Initialize(...)` is resolved to the correct generated parent constructor during flattening.
+
+### Safe method overloads
+
+B4X++ also supports method overloads when the parameter count is different:
+
+```vb
+Public Sub SetValue(Value As String)
+End Sub
+
+Public Sub SetValue(Value As String, Format As String)
+End Sub
+```
+
+Generated B4X:
+
+```vb
+Public Sub SetValue(Value As String)
+End Sub
+
+Public Sub SetValue2(Value As String, Format As String)
+End Sub
+```
+
+Same-arity overloads are rejected for now because v0.3.1 does not yet perform stable type-based overload resolution.
+
 ## v0.3.0: Language Intelligence
 
 B4X++ v0.3.0 starts the IntelliSense-focused track. The goal is to make `.bx` files comfortable to edit directly in VS Code while preserving the v0.1/v0.2 transpilation workflow.
