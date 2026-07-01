@@ -1,8 +1,8 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.2.1: OOP-aware .bx editing, reliable transpilation, custom property accessors, symbols/source maps, diagnostics, completion, B4X project sync and .b4xlib builds.",
-  "version": "0.2.1",
+  "description": "VS Code extension for B4X++ v0.3.0: workspace IntelliSense, semantic diagnostics, hover, signature help, source maps, B4X project sync and .b4xlib builds.",
+  "version": "0.3.0",
   "publisher": "soinala-studio",
   "license": "MIT",
   "engines": {
@@ -73,6 +73,26 @@
         "command": "b4xpp.buildB4XLib",
         "title": "B4X++: Build .b4xlib",
         "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.remapB4XErrors",
+        "title": "B4X++: Remap B4X Compiler / Runtime Errors",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.generateDebugBundle",
+        "title": "B4X++: Generate Debug Bundle",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.buildB4JWithRemap",
+        "title": "B4X++: Run B4J Build Command + Remap Errors",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.refreshIntelliSense",
+        "title": "B4X++: Refresh IntelliSense Index",
+        "category": "B4X++"
       }
     ],
     "configuration": {
@@ -127,6 +147,21 @@
           "type": "string",
           "default": "b4x-libs",
           "description": "Output folder for generated .b4xlib files."
+        },
+        "b4xpp.b4jBuildCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional B4J build command used by 'Run B4J Build Command + Remap Errors'. Supported placeholders: {project}, {workspace}, {projectDir}. Example: java -jar C:/B4J/B4JBuilder.jar {project}"
+        },
+        "b4xpp.writeLineSourceMap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write best-effort generated-line to .bx source mappings in .b4xpp/sourceMap.json. Used for compiler/runtime error remapping."
+        },
+        "b4xpp.enableSemanticDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, #Extends and CustomView color-property mistakes."
         }
       }
     }

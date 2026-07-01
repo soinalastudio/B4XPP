@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.0 - Language intelligence
+
+This release starts the B4X++ IntelliSense track. It keeps all v0.1, v0.2, v0.2.1 and v0.2.2 features intact and focuses on making `.bx` editing feel closer to a real B4X development environment.
+
+### Added
+- Workspace IntelliSense indexer for `src-b4xpp/**/*.bx` files.
+- `B4X++: Refresh IntelliSense Index` command.
+- Extended completion after `.` for B4X++ classes, interfaces, static modules, properties, fields and methods.
+- Context-aware visibility rules in completion: external code sees `Public`; subclasses see `Public` + `Protected`; class internals see all members.
+- `Super.` and `This.` / `Me.` member completions based on the inheritance hierarchy.
+- Override candidate snippets from parent `Virtual`, `Abstract` and `Override` methods.
+- Type completions for B4X++ classes, interfaces and common B4X/XUI types.
+- Hover information for classes, interfaces, static modules, properties, fields and methods.
+- Signature help for B4X++ methods and a first set of common XUI/B4X members.
+- Document symbols and workspace symbols for `.bx` files.
+- Semantic diagnostics for duplicate symbols, missing `#Include`, missing parent classes, missing interfaces, inheritance cycles, invalid overrides and inaccessible `Protected` / `Private` member calls.
+- CustomView-specific warning when Designer `Color` properties are read without `xui.PaintOrColorToColor(...)` or a helper such as `DesignerColor(...)`.
+- New setting: `b4xpp.enableSemanticDiagnostics`.
+
+### Notes
+- v0.3.0 does not yet index external installed `.b4xlib` libraries. Unknown external B4X types are therefore reported as warnings, not errors.
+- This release is intentionally focused on editing intelligence. The transpiler output remains compatible with the v0.2.2 workflow.
+
+## 0.2.2 - Source maps, remapping and debug bundle
+
+### Added
+- Fine-grained best-effort `.b4xpp/sourceMap.json` mappings from generated `.bas` lines back to `.bx` source lines.
+- `B4X++: Remap B4X Compiler / Runtime Errors` command. Paste B4J/B4A/B4i compiler output or runtime stack traces and B4X++ maps generated module/line locations back to `.bx` files.
+- `B4X++: Generate Debug Bundle` command. Writes `.b4xpp/debug-bundle.json` with generator version, outputs, diagnostics, hashes and metadata references.
+- `B4X++: Run B4J Build Command + Remap Errors` command with configurable `b4xpp.b4jBuildCommand`.
+- New settings: `b4xpp.b4jBuildCommand` and `b4xpp.writeLineSourceMap`.
+
+### Notes
+- The source map is intentionally best-effort in v0.2.2. Exact unchanged/transformed lines are mapped directly; generated helper lines fall back to the nearest source context.
+- This release keeps all v0.1 / v0.2 / v0.2.1 features intact.
+
 ## 0.2.1 - Custom property accessors
 
 This maintenance release keeps all v0.2.0 functionality and adds custom getter / setter support for `#Property` and computed properties.

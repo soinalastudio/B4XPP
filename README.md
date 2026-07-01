@@ -1,5 +1,60 @@
 # B4X++ for Visual Studio Code
 
+## v0.3.0: Language Intelligence
+
+B4X++ v0.3.0 starts the IntelliSense-focused track. The goal is to make `.bx` files comfortable to edit directly in VS Code while preserving the v0.1/v0.2 transpilation workflow.
+
+New editor features include:
+
+- workspace indexing of `src-b4xpp/**/*.bx`;
+- completion after `.` for classes, inherited members, properties, fields, interfaces and static modules;
+- visibility-aware suggestions for `Public`, `Protected` and `Private`;
+- `Super.` and `This.` / `Me.` completion;
+- override candidate snippets;
+- type completion for B4X++ classes and common B4X/XUI types;
+- hover documentation for methods, properties, fields and classes;
+- signature help for B4X++ methods and common XUI/B4X APIs;
+- document/workspace symbols;
+- semantic diagnostics for missing includes, missing parent classes, bad overrides, inaccessible protected/private members and common CustomView color-property mistakes.
+
+Refresh the index manually with:
+
+```text
+B4X++: Refresh IntelliSense Index
+```
+
+The semantic diagnostics can be disabled if needed:
+
+```json
+{
+  "b4xpp.enableSemanticDiagnostics": false
+}
+```
+
+External `.b4xlib` indexing is not included yet. Unknown external B4X types are warnings in this release and will be improved in a future version.
+
+
+## v0.2.2: source mapping and debug workflow
+
+B4X++ now writes `.b4xpp/sourceMap.json` and `.b4xpp/symbols.json` whenever files are generated. The source map is used by the new debugging commands:
+
+- **B4X++: Remap B4X Compiler / Runtime Errors**: paste a B4J/B4A/B4i compiler log or runtime stack trace and jump back to the matching `.bx` source line.
+- **B4X++: Generate Debug Bundle**: creates `.b4xpp/debug-bundle.json` with output hashes, diagnostics and references to the source map/symbols metadata.
+- **B4X++: Run B4J Build Command + Remap Errors**: runs your configured B4J build command and remaps generated `.bas` errors back to `.bx`. Configure `b4xpp.b4jBuildCommand` first.
+
+Example B4J build command setting:
+
+```json
+{
+  "b4xpp.b4jBuildCommand": "java -jar C:/B4J/B4JBuilder.jar {project}"
+}
+```
+
+Supported placeholders: `{project}`, `{workspace}`, `{projectDir}`.
+
+The source map is best-effort in v0.2.2: unchanged and directly transformed lines map accurately; generated helper lines fall back to the nearest source context.
+
+
 
 ## v0.2.1 custom property accessors
 

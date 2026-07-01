@@ -3,13 +3,18 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const childProcess = require('child_process');
+const crypto = require('crypto');
 const { transpileText, transpileFiles, B4XPP_GENERATOR_VERSION } = require('./lib/transpiler');
 
 let diagnosticCollection;
+let b4xppOutputChannel;
 
 function activate(context) {
   diagnosticCollection = vscode.languages.createDiagnosticCollection('b4xpp');
+  b4xppOutputChannel = vscode.window.createOutputChannel('B4X++');
   context.subscriptions.push(diagnosticCollection);
+  context.subscriptions.push(b4xppOutputChannel);
 
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.generateBas', generateBasCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.createExample', createExampleCommand));
@@ -17,6 +22,10 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.createIdeProject', createIdeProjectCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.syncDirectiveProject', syncDirectiveProjectCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4XLib', buildB4XLibCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.remapB4XErrors', remapB4XErrorsCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.generateDebugBundle', generateDebugBundleCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4JWithRemap', buildB4JWithRemapCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.refreshIntelliSense', refreshIntelliSenseCommand));
 
   const navigationProvider = new B4XPPSymbolNavigationProvider();
   context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, navigationProvider));
@@ -24,6 +33,13 @@ function activate(context) {
 
   const completionProvider = new B4XPPCompletionProvider();
   context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, completionProvider, '.', ' '));
+
+  const intelliSenseProvider = new B4XPPV3IntelliSenseProvider();
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, intelliSenseProvider, '.', ' ', '#'));
+  context.subscriptions.push(vscode.languages.registerHoverProvider({ language: 'b4xpp' }, intelliSenseProvider));
+  context.subscriptions.push(vscode.languages.registerSignatureHelpProvider({ language: 'b4xpp' }, intelliSenseProvider, '(', ','));
+  context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider({ language: 'b4xpp' }, intelliSenseProvider));
+  context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(new B4XPPV3WorkspaceSymbolProvider()));
 
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
     if (doc.languageId === 'b4xpp') validateDocument(doc);
@@ -63,6 +79,9 @@ function getConfig() {
     packageName: cfg.get('packageName') || 'b4xpp.example',
     mobileMainModuleName: cfg.get('mobileMainModuleName') || 'B4XPPMain',
     b4xlibDir: cfg.get('b4xlibDir') || 'b4x-libs',
+    b4jBuildCommand: cfg.get('b4jBuildCommand') || '',
+    writeLineSourceMap: cfg.get('writeLineSourceMap') !== false,
+    enableSemanticDiagnostics: cfg.get('enableSemanticDiagnostics') !== false,
     generatorVersion: B4XPP_GENERATOR_VERSION
   };
 }
@@ -392,20 +411,142 @@ function collectPropertySymbolsFromLines(lines) {
 function buildSourceMapMetadata(root, result, targetRoot) {
   const rel = (file) => file && !String(file).startsWith('B4X++') ? path.relative(root, file).replace(/\\/g, '/') : file;
   const generatedRoot = targetRoot ? path.relative(root, targetRoot).replace(/\\/g, '/') : '';
-  return {
-    generatorVersion: B4XPP_GENERATOR_VERSION,
-    generatedAt: new Date().toISOString(),
-    generatedRoot,
-    outputs: (result.outputs || []).map(out => ({
-      generated: generatedRoot ? `${generatedRoot}/${out.fileName}` : out.fileName,
+  const sourceIndex = buildSourceLineIndex(root, result);
+  const programInfo = result && result.programInfo;
+  const outputs = (result.outputs || []).map(out => {
+    const generated = generatedRoot ? `${generatedRoot}/${out.fileName}` : out.fileName;
+    const ownerSources = getLikelySourceFilesForOutput(out, programInfo).map(rel).filter(Boolean);
+    const mappings = buildBestEffortLineMappings(root, out, ownerSources, sourceIndex);
+    return {
+      generated,
       module: out.moduleName,
       kind: out.kind,
       source: rel(out.sourcePath),
+      sources: ownerSources,
       lineOffset: 1,
-      note: 'B4X++ v0.2 keeps a coarse module-level map. Fine-grained line maps are planned for later builds.'
-    })),
+      mappings,
+      note: 'Best-effort line mappings generated from transformed .bas output and original .bx source. Exact transformed lines map directly; generated helper lines fall back to nearest module/source context.'
+    };
+  });
+
+  return {
+    schemaVersion: 2,
+    generatorVersion: B4XPP_GENERATOR_VERSION,
+    generatedAt: new Date().toISOString(),
+    generatedRoot,
+    outputs,
     diagnostics: (result.diagnostics || []).map(d => ({ severity: d.severity, message: d.message, source: rel(d.sourcePath), line: d.line || 1 }))
   };
+}
+
+function buildSourceLineIndex(root, result) {
+  const files = new Set();
+  for (const f of (result.files || [])) files.add(path.resolve(f));
+  for (const f of (result.includedFiles || [])) files.add(path.resolve(f));
+  const programInfo = result && result.programInfo;
+  if (programInfo) {
+    for (const cls of programInfo.classes.values()) if (cls.sourcePath && !String(cls.sourcePath).startsWith('B4X++')) files.add(path.resolve(cls.sourcePath));
+    for (const intf of programInfo.interfaces.values()) if (intf.sourcePath && !String(intf.sourcePath).startsWith('B4X++')) files.add(path.resolve(intf.sourcePath));
+    for (const mod of programInfo.staticCodes.values()) if (mod.sourcePath && !String(mod.sourcePath).startsWith('B4X++')) files.add(path.resolve(mod.sourcePath));
+  }
+  const byNormalizedLine = new Map();
+  const byFile = new Map();
+  for (const file of files) {
+    if (!fs.existsSync(file)) continue;
+    const relFile = path.relative(root, file).replace(/\\/g, '/');
+    const lines = normalizeNewlines(fs.readFileSync(file, 'utf8')).split('\n');
+    byFile.set(relFile, lines);
+    for (let i = 0; i < lines.length; i++) {
+      for (const key of sourceLineKeys(lines[i])) {
+        if (!byNormalizedLine.has(key)) byNormalizedLine.set(key, []);
+        byNormalizedLine.get(key).push({ source: relFile, sourceLine: i + 1, sourceText: lines[i] });
+      }
+    }
+  }
+  return { byNormalizedLine, byFile };
+}
+
+function getLikelySourceFilesForOutput(out, programInfo) {
+  const sources = [];
+  const add = (f) => { if (f && !String(f).startsWith('B4X++') && !sources.map(x => path.resolve(x).toLowerCase()).includes(path.resolve(f).toLowerCase())) sources.push(f); };
+  add(out.sourcePath);
+  if (!programInfo || !out.moduleName) return sources;
+  const cls = programInfo.getClass && programInfo.getClass(out.moduleName);
+  if (cls) {
+    for (const ancestor of (programInfo.ancestorChain(out.moduleName) || []).slice().reverse()) add(ancestor.sourcePath);
+    add(cls.sourcePath);
+  }
+  const stat = programInfo.staticCodes && programInfo.staticCodes.get(String(out.moduleName).toLowerCase());
+  if (stat) add(stat.sourcePath);
+  return sources;
+}
+
+function sourceLineKeys(line) {
+  const raw = String(line || '');
+  const code = splitCodeAndCommentForNavigation(raw).code.trim();
+  if (!code) return [];
+  const keys = new Set();
+  keys.add(normalizeLineForSourceMap(code));
+  // B4X++ visibility lowering: Protected fields/subs become Private in generated B4X.
+  keys.add(normalizeLineForSourceMap(code.replace(/^Protected\s+/i, 'Private ')));
+  // B4X++ modifiers disappear in generated .bas.
+  keys.add(normalizeLineForSourceMap(code.replace(/^(?:Public|Private|Protected)?\s*(?:Override|Virtual|Final)\s+Sub\s+/i, (m) => {
+    const vis = (/^\s*(Public|Private|Protected)/i.exec(m) || [,'Public'])[1];
+    return `${vis === 'Protected' ? 'Private' : vis} Sub `;
+  })));
+  return Array.from(keys).filter(Boolean);
+}
+
+function normalizeLineForSourceMap(line) {
+  return String(line || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([(),=:+\-*/&<>])\s*/g, '$1')
+    .trim()
+    .toLowerCase();
+}
+
+function buildBestEffortLineMappings(root, out, ownerSources, sourceIndex) {
+  const generatedLines = normalizeNewlines(out.content || '').split('\n');
+  const mappings = [];
+  let lastBySource = new Map();
+  const preferredSources = new Set((ownerSources || []).map(s => String(s).toLowerCase()));
+
+  for (let i = 0; i < generatedLines.length; i++) {
+    const generatedLine = i + 1;
+    const raw = generatedLines[i] || '';
+    const code = splitCodeAndCommentForNavigation(raw).code.trim();
+    if (!code || /^'/.test(code) || /^#/.test(code)) continue;
+    const key = normalizeLineForSourceMap(code);
+    if (!key) continue;
+    let candidates = (sourceIndex.byNormalizedLine.get(key) || []).slice();
+    if (candidates.length === 0) continue;
+    candidates.sort((a, b) => scoreMappingCandidate(a, preferredSources, lastBySource) - scoreMappingCandidate(b, preferredSources, lastBySource));
+    const chosen = candidates[0];
+    lastBySource.set(chosen.source, chosen.sourceLine);
+    mappings.push({
+      generatedLine,
+      source: chosen.source,
+      sourceLine: chosen.sourceLine,
+      confidence: preferredSources.has(String(chosen.source).toLowerCase()) ? 'exact-preferred' : 'exact',
+      generatedText: raw.trim(),
+      sourceText: String(chosen.sourceText || '').trim()
+    });
+  }
+  return mappings;
+}
+
+function scoreMappingCandidate(candidate, preferredSources, lastBySource) {
+  let score = 0;
+  const sourceKey = String(candidate.source || '').toLowerCase();
+  if (!preferredSources.has(sourceKey)) score += 100000;
+  const last = lastBySource.get(candidate.source);
+  if (last) {
+    if (candidate.sourceLine < last) score += 1000 + (last - candidate.sourceLine);
+    else score += Math.abs(candidate.sourceLine - last);
+  } else {
+    score += candidate.sourceLine / 1000;
+  }
+  return score;
 }
 
 function parseGeneratedVersion(content) {
@@ -1543,7 +1684,7 @@ function validateDocument(document) {
     if (fs.existsSync(sourceRoot) && isPathInside(document.uri.fsPath, sourceRoot)) {
       try {
         const result = transpileWorkspace(root, config);
-        publishDiagnostics(result.allDiagnostics);
+        publishDiagnostics(mergeV3SemanticDiagnostics(result.allDiagnostics, document, root, config));
         return;
       } catch (err) {
         // Fall back to single-document validation. This keeps diagnostics alive while the workspace is being created.
@@ -1555,7 +1696,7 @@ function validateDocument(document) {
     addGeneratedHeader: false,
     workspaceRoot: folder ? folder.uri.fsPath : undefined
   });
-  publishDiagnostics(new Map([[document.uri.toString(), result.diagnostics || []]]));
+  publishDiagnostics(mergeV3SemanticDiagnostics(new Map([[document.uri.toString(), result.diagnostics || []]]), document, folder ? folder.uri.fsPath : path.dirname(document.uri.fsPath), getConfig()));
 }
 
 function publishDiagnostics(diagnosticsByUri) {
@@ -2228,5 +2369,1002 @@ function resolveIncludeTargetForDocument(document, includeValue) {
   if (!/\.bx$/i.test(direct) && fs.existsSync(direct + '.bx')) return direct + '.bx';
   return direct;
 }
+
+
+async function remapB4XErrorsCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const map = loadB4XPPSourceMap(root);
+  if (!map) {
+    vscode.window.showWarningMessage('B4X++: no .b4xpp/sourceMap.json found. Run Generate .bas, Sync #Project or Build .b4xlib first.');
+    return;
+  }
+  const activeText = await tryReadClipboardText();
+  const log = await vscode.window.showInputBox({
+    title: 'B4X++: paste B4X compiler / runtime errors',
+    prompt: 'Paste B4J/B4A/B4i compiler output or runtime stack trace. Use clipboard text if already copied.',
+    value: activeText && activeText.length < 12000 ? activeText : '',
+    ignoreFocusOut: true
+  });
+  if (!log) return;
+  const remapped = remapB4XLog(root, map, log);
+  showRemapResults(root, remapped, 'B4X++ remapped errors');
+}
+
+async function generateDebugBundleCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const config = getConfig();
+  if (!(await ensureSourceFolderOrOfferExample(root, config))) return;
+  const result = transpileWorkspace(root, config);
+  publishDiagnostics(result.allDiagnostics);
+  writeB4XPPMetadata(root, result, path.join(root, config.outputDir));
+  const metaRoot = path.join(root, '.b4xpp');
+  fs.mkdirSync(metaRoot, { recursive: true });
+  const bundle = {
+    schemaVersion: 1,
+    generatorVersion: B4XPP_GENERATOR_VERSION,
+    createdAt: new Date().toISOString(),
+    workspaceName: path.basename(root),
+    sourceDir: config.sourceDir,
+    outputDir: config.outputDir,
+    project: result.project || null,
+    diagnostics: result.diagnostics || [],
+    outputs: (result.outputs || []).map(out => ({
+      module: out.moduleName,
+      kind: out.kind,
+      fileName: out.fileName,
+      sourcePath: out.sourcePath && !String(out.sourcePath).startsWith('B4X++') ? path.relative(root, out.sourcePath).replace(/\\/g, '/') : out.sourcePath,
+      sha256: sha256(out.content || ''),
+      lineCount: normalizeNewlines(out.content || '').split('\n').length
+    })),
+    symbolsFile: '.b4xpp/symbols.json',
+    sourceMapFile: '.b4xpp/sourceMap.json',
+    notes: [
+      'Attach this file with .b4xpp/sourceMap.json and the B4X compiler log when reporting B4X++ generation/debug issues.',
+      'No user secrets are intentionally included. Review before publishing publicly.'
+    ]
+  };
+  const filePath = path.join(metaRoot, 'debug-bundle.json');
+  fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2) + '\n', 'utf8');
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+  await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage('B4X++: debug bundle generated at .b4xpp/debug-bundle.json.');
+}
+
+async function buildB4JWithRemapCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const config = getConfig();
+  if (!config.b4jBuildCommand || !config.b4jBuildCommand.trim()) {
+    const choice = await vscode.window.showWarningMessage(
+      'B4X++: b4xpp.b4jBuildCommand is empty. Configure a command that builds a .b4j project. Placeholders: {project}, {workspace}, {projectDir}.',
+      'Open Settings',
+      'Cancel'
+    );
+    if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'b4xpp.b4jBuildCommand');
+    return;
+  }
+
+  const projectFiles = findFilesRecursive(root, /\.b4j$/i, ['Objects', '.git', 'node_modules']).slice(0, 50);
+  if (projectFiles.length === 0) {
+    vscode.window.showWarningMessage('B4X++: no .b4j file found under the workspace. Run Sync #Project or Create B4A/B4J/B4i Project first.');
+    return;
+  }
+  const picked = projectFiles.length === 1 ? projectFiles[0] : await pickFile(root, projectFiles, 'B4X++: choose the .b4j project to build');
+  if (!picked) return;
+
+  const command = config.b4jBuildCommand
+    .replace(/\{project\}/g, quoteShellPath(picked))
+    .replace(/\{workspace\}/g, quoteShellPath(root))
+    .replace(/\{projectDir\}/g, quoteShellPath(path.dirname(picked)));
+
+  b4xppOutputChannel.clear();
+  b4xppOutputChannel.appendLine('B4X++: running B4J build command');
+  b4xppOutputChannel.appendLine(command);
+  b4xppOutputChannel.show(true);
+
+  childProcess.exec(command, { cwd: path.dirname(picked), maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
+    const output = [stdout || '', stderr || '', error ? String(error.message || error) : ''].filter(Boolean).join('\n');
+    b4xppOutputChannel.appendLine(output || '(no output)');
+    const map = loadB4XPPSourceMap(root);
+    if (map) {
+      const remapped = remapB4XLog(root, map, output);
+      showRemapResults(root, remapped, 'B4X++ remapped B4J build output');
+    } else {
+      vscode.window.showWarningMessage('B4X++: build finished, but no .b4xpp/sourceMap.json was found for remapping.');
+    }
+  });
+}
+
+function loadB4XPPSourceMap(root) {
+  const filePath = path.join(root, '.b4xpp', 'sourceMap.json');
+  if (!fs.existsSync(filePath)) return null;
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch (err) {
+    vscode.window.showWarningMessage(`B4X++: failed to read sourceMap.json: ${err.message}`);
+    return null;
+  }
+}
+
+function remapB4XLog(root, sourceMap, logText) {
+  const lines = normalizeNewlines(logText || '').split('\n');
+  const results = [];
+  for (const line of lines) {
+    const parsed = parseB4XErrorLine(line);
+    if (!parsed) continue;
+    const mapped = mapGeneratedLocation(sourceMap, parsed.module, parsed.line);
+    results.push({ ...parsed, original: line, mapped });
+  }
+  return results;
+}
+
+function parseB4XErrorLine(line) {
+  const text = String(line || '').trim();
+  if (!text) return null;
+  let m = text.match(/^error:\s*\(module:\s*([A-Za-z_][A-Za-z0-9_]*),\s*line:\s*(\d+)\)\s*(.*)$/i);
+  if (m) return { severity: 'error', module: m[1], line: Number(m[2]), message: m[3] || '' };
+  m = text.match(/^warning:\s*\(module:\s*([A-Za-z_][A-Za-z0-9_]*),\s*line:\s*(\d+)\)\s*(.*)$/i);
+  if (m) return { severity: 'warning', module: m[1], line: Number(m[2]), message: m[3] || '' };
+  m = text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*-\s*(\d+)\s*:\s*(.*)$/i);
+  if (m) return { severity: /warning/i.test(text) ? 'warning' : 'error', module: m[1], line: Number(m[2]), message: m[3] || '' };
+  m = text.match(/^Error occurred on line:\s*(\d+)\s*\(([A-Za-z_][A-Za-z0-9_]*)\)/i);
+  if (m) return { severity: 'error', module: m[2], line: Number(m[1]), message: text };
+  m = text.match(/^at\s+[\w.]+\.([A-Za-z_][A-Za-z0-9_]*)\._[A-Za-z0-9_]+\([^:()]+\.java:(\d+)\)/i);
+  if (m) return { severity: 'error', module: m[1], line: Number(m[2]), message: text };
+  return null;
+}
+
+function mapGeneratedLocation(sourceMap, moduleName, generatedLine) {
+  if (!sourceMap || !Array.isArray(sourceMap.outputs)) return null;
+  const moduleLower = String(moduleName || '').toLowerCase();
+  const out = sourceMap.outputs.find(o => String(o.module || '').toLowerCase() === moduleLower || String(o.generated || '').toLowerCase().endsWith(`/${moduleLower}.bas`));
+  if (!out) return null;
+  const mappings = Array.isArray(out.mappings) ? out.mappings.slice().sort((a, b) => a.generatedLine - b.generatedLine) : [];
+  let exact = mappings.find(m => Number(m.generatedLine) === Number(generatedLine));
+  if (exact) return { ...exact, module: out.module, generated: out.generated, exact: true };
+  let before = null;
+  for (const m of mappings) {
+    if (Number(m.generatedLine) <= Number(generatedLine)) before = m;
+    else break;
+  }
+  if (before) return { ...before, module: out.module, generated: out.generated, exact: false, generatedDelta: Number(generatedLine) - Number(before.generatedLine) };
+  const fallbackSource = (out.sources && out.sources[0]) || out.source;
+  return fallbackSource ? { source: fallbackSource, sourceLine: 1, module: out.module, generated: out.generated, exact: false, confidence: 'module' } : null;
+}
+
+function showRemapResults(root, remapped, title) {
+  b4xppOutputChannel.appendLine('');
+  b4xppOutputChannel.appendLine(`=== ${title} ===`);
+  if (!remapped || remapped.length === 0) {
+    b4xppOutputChannel.appendLine('No B4X compiler/runtime locations were recognized.');
+    b4xppOutputChannel.show(true);
+    vscode.window.showInformationMessage('B4X++: no recognizable B4X error locations found.');
+    return;
+  }
+
+  const diagnosticsByUri = new Map();
+  for (const item of remapped) {
+    if (item.mapped && item.mapped.source) {
+      const sourcePath = path.isAbsolute(item.mapped.source) ? item.mapped.source : path.join(root, item.mapped.source);
+      const rel = path.relative(root, sourcePath).replace(/\\/g, '/');
+      const line = Math.max(1, Number(item.mapped.sourceLine || 1));
+      const suffix = item.mapped.exact ? 'exact' : `nearest${item.mapped.generatedDelta ? ', +' + item.mapped.generatedDelta + ' generated line(s)' : ''}`;
+      b4xppOutputChannel.appendLine(`${item.module} - ${item.line} -> ${rel}:${line} [${suffix}] ${item.message}`);
+      if (fs.existsSync(sourcePath)) {
+        const uri = vscode.Uri.file(sourcePath).toString();
+        if (!diagnosticsByUri.has(uri)) diagnosticsByUri.set(uri, []);
+        diagnosticsByUri.get(uri).push({
+          severity: item.severity || 'error',
+          message: `[B4X ${item.module}:${item.line}] ${item.message}`,
+          line
+        });
+      }
+    } else {
+      b4xppOutputChannel.appendLine(`${item.module} - ${item.line} -> no B4X++ mapping found. ${item.message}`);
+    }
+  }
+  publishDiagnostics(diagnosticsByUri);
+  b4xppOutputChannel.show(true);
+  vscode.window.showInformationMessage(`B4X++: remapped ${remapped.length} compiler/runtime location(s). See the B4X++ output panel.`);
+}
+
+async function tryReadClipboardText() {
+  try { return await vscode.env.clipboard.readText(); }
+  catch { return ''; }
+}
+
+function sha256(text) {
+  return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex');
+}
+
+function findFilesRecursive(root, regex, ignoredNames = []) {
+  const out = [];
+  const ignored = new Set(ignoredNames.map(s => String(s).toLowerCase()));
+  function walk(dir) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.has(entry.name.toLowerCase())) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (regex.test(entry.name)) out.push(full);
+    }
+  }
+  walk(root);
+  return out;
+}
+
+async function pickFile(root, files, placeHolder) {
+  const picked = await vscode.window.showQuickPick(files.map(f => ({ label: path.relative(root, f).replace(/\\/g, '/'), file: f })), { placeHolder });
+  return picked && picked.file;
+}
+
+function quoteShellPath(file) {
+  const s = String(file || '');
+  if (/^".*"$/.test(s)) return s;
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+
+//────────────────────────────────────────────────────────────
+// B4X++ v0.3.0 language intelligence layer
+//────────────────────────────────────────────────────────────
+let b4xppV3IndexCache = null;
+let b4xppV3IndexCacheKey = '';
+
+async function refreshIntelliSenseCommand() {
+  const editor = vscode.window.activeTextEditor;
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  b4xppV3IndexCache = null;
+  b4xppV3IndexCacheKey = '';
+  const config = getConfig();
+  const index = buildV3IndexForRoot(folder.uri.fsPath, config, editor && editor.document);
+  const classCount = index.classes.size;
+  const interfaceCount = index.interfaces.size;
+  const staticCount = index.staticCodes.size;
+  vscode.window.showInformationMessage(`B4X++: IntelliSense index refreshed (${classCount} classes, ${interfaceCount} interfaces, ${staticCount} static modules).`);
+  if (editor && editor.document.languageId === 'b4xpp') validateDocument(editor.document);
+}
+
+function mergeV3SemanticDiagnostics(baseDiagnosticsByUri, document, root, config) {
+  if (!config || config.enableSemanticDiagnostics === false) return baseDiagnosticsByUri;
+  const merged = new Map(baseDiagnosticsByUri || []);
+  try {
+    const index = buildV3IndexForRoot(root, config, document);
+    const extras = collectV3SemanticDiagnostics(index);
+    for (const [uri, diagnostics] of extras.entries()) {
+      if (!merged.has(uri)) merged.set(uri, []);
+      merged.get(uri).push(...diagnostics);
+    }
+  } catch (err) {
+    // Never break normal transpiler diagnostics because of editor-only IntelliSense diagnostics.
+  }
+  return merged;
+}
+
+class B4XPPV3IntelliSenseProvider {
+  provideCompletionItems(document, position) {
+    const index = buildV3Index(document);
+    const fileInfo = v3GetFileInfo(index, document.uri.fsPath);
+    const line = document.lineAt(position.line).text;
+    const prefix = line.slice(0, position.character);
+    const currentClass = v3FindClassAt(index, fileInfo, position.line);
+
+    const overrideMatch = prefix.match(/^\s*((?:Public|Private|Protected)\s+)?Override\s*$/i);
+    if (overrideMatch && currentClass) return v3OverrideCompletions(index, currentClass);
+
+    if (/\bSuper\.([A-Za-z_][A-Za-z0-9_]*)?$/i.test(prefix) && currentClass && currentClass.extendsName) {
+      return v3MemberCompletions(index, currentClass.extendsName, { currentClass: currentClass.name, includeProtected: true, includePrivate: false, receiver: 'Super' });
+    }
+
+    if (/\b(?:This|Me)\.([A-Za-z_][A-Za-z0-9_]*)?$/i.test(prefix) && currentClass) {
+      return v3MemberCompletions(index, currentClass.name, { currentClass: currentClass.name, includeProtected: true, includePrivate: true, receiver: 'This' });
+    }
+
+    const receiverMatch = prefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$/);
+    if (receiverMatch) {
+      const receiver = receiverMatch[1];
+      const resolved = v3ResolveReceiverType(index, fileInfo, position.line, receiver);
+      if (resolved) return v3MemberCompletions(index, resolved.type, { currentClass: currentClass && currentClass.name, includeProtected: false, includePrivate: false, staticOnly: resolved.staticOnly });
+      const builtIn = v3BuiltinMembers(receiver, null);
+      if (builtIn.length) return builtIn;
+    }
+
+    const afterAs = /\bAs\s+(?:Poly\s+)?[A-Za-z_][A-Za-z0-9_]*$/i.test(prefix);
+    const afterNew = /\b(?:Dim|Private|Public|Protected)\s+[A-Za-z_][A-Za-z0-9_]*\s+As\s*$/i.test(prefix);
+    if (afterAs || afterNew || /\b(?:Extends|Implements|Poly)\s*$/i.test(prefix)) {
+      return v3TypeCompletions(index);
+    }
+
+    return [
+      ...completionForB4XPPKeywords(),
+      ...v3TopLevelCompletions(index),
+      ...v3B4XKeywordCompletions()
+    ];
+  }
+
+  provideHover(document, position) {
+    const index = buildV3Index(document);
+    const resolved = v3ResolveSymbolAt(index, document, position);
+    if (!resolved) return null;
+    const md = new vscode.MarkdownString(undefined, true);
+    md.isTrusted = false;
+    md.appendMarkdown(v3SymbolMarkdown(resolved));
+    return new vscode.Hover(md, resolved.range);
+  }
+
+  provideSignatureHelp(document, position) {
+    const index = buildV3Index(document);
+    const fileInfo = v3GetFileInfo(index, document.uri.fsPath);
+    const parsed = v3ParseCallAt(document, position);
+    if (!parsed) return null;
+    const currentClass = v3FindClassAt(index, fileInfo, position.line);
+    let methods = [];
+    if (parsed.receiver) {
+      if (/^Super$/i.test(parsed.receiver) && currentClass && currentClass.extendsName) {
+        const found = v3FindMethodInClass(index, currentClass.extendsName, parsed.name, { includeAncestors: true, skipPrivate: true });
+        if (found) methods.push(found);
+      } else if (/^(This|Me)$/i.test(parsed.receiver) && currentClass) {
+        const found = v3FindMethodInClass(index, currentClass.name, parsed.name, { includeAncestors: true });
+        if (found) methods.push(found);
+      } else {
+        const resolved = v3ResolveReceiverType(index, fileInfo, position.line, parsed.receiver);
+        if (resolved) {
+          const found = v3FindMethodInType(index, resolved.type, parsed.name);
+          if (found) methods.push(found);
+        }
+      }
+    } else if (currentClass) {
+      const found = v3FindMethodInClass(index, currentClass.name, parsed.name, { includeAncestors: true });
+      if (found) methods.push(found);
+    }
+    const builtin = v3BuiltinMethodSignature(parsed.receiver, parsed.name);
+    if (builtin) methods.push(builtin);
+    if (!methods.length) return null;
+
+    const help = new vscode.SignatureHelp();
+    for (const found of methods) {
+      const method = found.method || found;
+      const ownerName = found.owner ? found.owner.name : (method.ownerName || 'B4X');
+      const params = method.params || v3ParseParams(method.paramsRaw || '');
+      const label = `${method.name}(${params.map(p => `${p.name}${p.type ? ' As ' + p.type : ''}`).join(', ')})${method.returnType ? ' As ' + method.returnType : ''}`;
+      const sig = new vscode.SignatureInformation(label, `${ownerName}.${method.name}`);
+      sig.parameters = params.map(p => new vscode.ParameterInformation(`${p.name}${p.type ? ' As ' + p.type : ''}`));
+      help.signatures.push(sig);
+    }
+    help.activeSignature = 0;
+    help.activeParameter = Math.min(parsed.argumentIndex, Math.max(0, (help.signatures[0].parameters || []).length - 1));
+    return help;
+  }
+
+  provideDocumentSymbols(document) {
+    const index = buildV3Index(document);
+    const info = v3GetFileInfo(index, document.uri.fsPath);
+    if (!info) return [];
+    const out = [];
+    for (const owner of [...info.classes, ...info.interfaces, ...info.staticCodes]) {
+      const ownerKind = owner.kind === 'interface' ? vscode.SymbolKind.Interface : owner.kind === 'staticCode' ? vscode.SymbolKind.Module : vscode.SymbolKind.Class;
+      const sym = new vscode.DocumentSymbol(owner.name, owner.kind, ownerKind, owner.fullRange || owner.range, owner.range);
+      for (const prop of owner.properties.values()) sym.children.push(new vscode.DocumentSymbol(prop.name, prop.type || 'property', vscode.SymbolKind.Property, prop.fullRange || prop.range, prop.range));
+      for (const field of owner.fields.values()) sym.children.push(new vscode.DocumentSymbol(field.name, field.type || 'field', vscode.SymbolKind.Field, field.fullRange || field.range, field.range));
+      for (const method of owner.methods.values()) sym.children.push(new vscode.DocumentSymbol(method.name, v3MethodDetail(method), vscode.SymbolKind.Method, method.fullRange || method.range, method.range));
+      out.push(sym);
+    }
+    for (const method of info.methods.filter(m => m.ownerKind === 'module')) {
+      out.push(new vscode.DocumentSymbol(method.name, v3MethodDetail(method), vscode.SymbolKind.Function, method.fullRange || method.range, method.range));
+    }
+    return out;
+  }
+}
+
+class B4XPPV3WorkspaceSymbolProvider {
+  provideWorkspaceSymbols(query) {
+    const folder = getWorkspaceFolder();
+    if (!folder) return [];
+    const index = buildV3IndexForRoot(folder.uri.fsPath, getConfig(), vscode.window.activeTextEditor && vscode.window.activeTextEditor.document);
+    const q = String(query || '').toLowerCase();
+    const symbols = [];
+    const add = (symbol, kind, container) => {
+      if (q && !symbol.name.toLowerCase().includes(q)) return;
+      symbols.push(new vscode.SymbolInformation(symbol.name, kind, container || '', toLocation(symbol)));
+    };
+    for (const cls of index.classes.values()) add(cls, vscode.SymbolKind.Class, 'B4X++');
+    for (const intf of index.interfaces.values()) add(intf, vscode.SymbolKind.Interface, 'B4X++');
+    for (const mod of index.staticCodes.values()) add(mod, vscode.SymbolKind.Module, 'B4X++');
+    for (const owner of [...index.classes.values(), ...index.interfaces.values(), ...index.staticCodes.values()]) {
+      for (const prop of owner.properties.values()) add(prop, vscode.SymbolKind.Property, owner.name);
+      for (const method of owner.methods.values()) add(method, vscode.SymbolKind.Method, owner.name);
+    }
+    return symbols.slice(0, 500);
+  }
+}
+
+function buildV3Index(document) {
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri) || getWorkspaceFolder();
+  const root = folder ? folder.uri.fsPath : path.dirname(document.uri.fsPath);
+  return buildV3IndexForRoot(root, getConfig(), document);
+}
+
+function buildV3IndexForRoot(root, config, activeDocument) {
+  const sourceRoot = path.join(root, (config && config.sourceDir) || 'src-b4xpp');
+  const files = fs.existsSync(sourceRoot) ? collectBxFiles(sourceRoot) : [];
+  if (activeDocument && activeDocument.languageId === 'b4xpp' && !files.some(f => samePath(f, activeDocument.uri.fsPath))) files.push(activeDocument.uri.fsPath);
+  const key = [root, files.map(f => `${f}:${safeMTime(f)}`).join('|'), activeDocument ? activeDocument.uri.fsPath + ':' + activeDocument.version : ''].join('::');
+  if (b4xppV3IndexCache && b4xppV3IndexCacheKey === key) return b4xppV3IndexCache;
+
+  const index = {
+    root,
+    sourceRoot,
+    files,
+    classes: new Map(),
+    interfaces: new Map(),
+    staticCodes: new Map(),
+    fileInfos: new Map(),
+    duplicates: []
+  };
+  for (const file of files) {
+    try {
+      const text = activeDocument && samePath(activeDocument.uri.fsPath, file) ? activeDocument.getText() : getWorkspaceText(file);
+      const info = v3ParseFile(file, text);
+      index.fileInfos.set(normalizePathKey(file), info);
+      for (const cls of info.classes) v3AddNamed(index.classes, cls, index.duplicates);
+      for (const intf of info.interfaces) v3AddNamed(index.interfaces, intf, index.duplicates);
+      for (const mod of info.staticCodes) v3AddNamed(index.staticCodes, mod, index.duplicates);
+    } catch (err) {}
+  }
+  b4xppV3IndexCache = index;
+  b4xppV3IndexCacheKey = key;
+  return index;
+}
+
+function v3AddNamed(map, symbol, duplicates) {
+  const key = symbol.name.toLowerCase();
+  if (map.has(key)) duplicates.push({ first: map.get(key), second: symbol });
+  else map.set(key, symbol);
+}
+
+function safeMTime(file) {
+  try { return fs.statSync(file).mtimeMs; } catch { return 0; }
+}
+
+function v3ParseFile(file, text) {
+  const lines = normalizeNewlines(text).split('\n');
+  const info = { file, lines, includes: [], classes: [], interfaces: [], staticCodes: [], methods: [] };
+  let owner = null;
+  let method = null;
+  let inGlobals = false;
+
+  const closeMethod = (endLine) => { if (method) method.endLine = Math.max(method.startLine, endLine); method = null; inGlobals = false; };
+  const closeOwner = (endLine) => { if (owner) { owner.endLine = Math.max(owner.startLine, endLine); owner.fullRange = new vscode.Range(owner.startLine, 0, owner.endLine, 200); } owner = null; };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const code = splitCodeAndCommentForNavigation(raw).code;
+    const trimmed = code.trim();
+    const inc = trimmed.match(/^#Include\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+    if (inc) info.includes.push({ value: inc[1] || inc[2] || inc[3], file, line: i, range: makeWordRange(raw, i, inc[1] || inc[2] || inc[3], 0) });
+
+    if (/^#End\s+(Class|Interface|StaticCode)\b/i.test(trimmed)) { closeMethod(i); closeOwner(i); continue; }
+    if (/^End\s+Sub\b/i.test(trimmed) || /^End\s+(Get|Set)\b/i.test(trimmed)) { closeMethod(i); continue; }
+
+    const staticMatch = trimmed.match(/^#StaticCode\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (staticMatch) { closeMethod(i - 1); closeOwner(i - 1); owner = v3MakeOwner('staticCode', staticMatch[1], raw, i, file); info.staticCodes.push(owner); continue; }
+
+    const intfMatch = trimmed.match(/^#Interface\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (intfMatch) { closeMethod(i - 1); closeOwner(i - 1); owner = v3MakeOwner('interface', intfMatch[1], raw, i, file); info.interfaces.push(owner); continue; }
+
+    const clsMatch = trimmed.match(/^#Class\s+([A-Za-z_][A-Za-z0-9_]*)(.*)$/i);
+    if (clsMatch) {
+      closeMethod(i - 1); closeOwner(i - 1);
+      owner = v3MakeOwner('class', clsMatch[1], raw, i, file);
+      const rest = clsMatch[2] || '';
+      const ext = rest.match(/\bExtends\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+      const impl = rest.match(/\bImplements\s+(.+?)(?:\b(?:Extends|Abstract|Final|Composition|Strategy)\b|$)/i);
+      owner.extendsName = ext ? ext[1] : null;
+      owner.extendsRange = ext ? makeWordRange(raw, i, ext[1], raw.indexOf(ext[0])) : null;
+      owner.implementsNames = parseImplementsNames(impl ? impl[1] : '');
+      if (/\bFinal\b/i.test(rest)) owner.modifiers.push('final');
+      if (/\bAbstract\b/i.test(rest)) owner.modifiers.push('abstract');
+      info.classes.push(owner);
+      continue;
+    }
+
+    const extLine = trimmed.match(/^#Extends\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (extLine && owner && owner.kind === 'class') { owner.extendsName = extLine[1]; owner.extendsRange = makeWordRange(raw, i, extLine[1], 0); continue; }
+    const implLine = trimmed.match(/^#Implements\s+(.+)$/i);
+    if (implLine && owner && owner.kind === 'class') { owner.implementsNames.push(...parseImplementsNames(implLine[1])); continue; }
+
+    const prop = v3ParsePropertyLine(raw, i, file, owner);
+    if (prop && owner) { owner.properties.set(prop.name.toLowerCase(), prop); continue; }
+
+    const getterSetter = v3ParseGetterSetter(raw, i, file, owner);
+    if (getterSetter && owner) {
+      closeMethod(i - 1);
+      method = getterSetter.method;
+      owner.methods.set(method.name.toLowerCase(), method);
+      info.methods.push(method);
+      const propName = getterSetter.property.name.toLowerCase();
+      const old = owner.properties.get(propName) || getterSetter.property;
+      if (getterSetter.kind === 'get') old.hasCustomGet = true;
+      if (getterSetter.kind === 'set') old.hasCustomSet = true;
+      owner.properties.set(propName, old);
+      continue;
+    }
+
+    const methodSig = v3ParseMethod(raw, i, file, owner);
+    if (methodSig) {
+      closeMethod(i - 1);
+      method = methodSig;
+      info.methods.push(method);
+      if (owner) owner.methods.set(method.name.toLowerCase(), method);
+      inGlobals = /^(Class_Globals|Process_Globals)$/i.test(method.name);
+      continue;
+    }
+
+    if (owner && (method == null || inGlobals)) {
+      const field = v3ParseFieldLine(raw, i, file, owner);
+      if (field) owner.fields.set(field.name.toLowerCase(), field);
+    }
+  }
+  closeMethod(lines.length - 1);
+  closeOwner(lines.length - 1);
+  return info;
+}
+
+function v3MakeOwner(kind, name, raw, line, file) {
+  return { kind, name, file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length), methods: new Map(), properties: new Map(), fields: new Map(), implementsNames: [], modifiers: [] };
+}
+
+function v3ParsePropertyLine(raw, line, file, owner) {
+  const code = splitCodeAndCommentForNavigation(raw).code.trim();
+  const m = code.match(/^#Property\s+(.+?)\s+As\s+(.+)$/i);
+  if (!m) return null;
+  const tokens = m[1].trim().split(/\s+/).filter(Boolean);
+  const name = tokens.pop();
+  if (!name) return null;
+  let visibility = 'public'; let mode = 'readwrite';
+  for (const t of tokens) {
+    const l = t.toLowerCase();
+    if (['public', 'protected', 'private'].includes(l)) visibility = l;
+    else if (l === 'readonly') mode = 'readonly';
+    else if (l === 'writeonly') mode = 'writeonly';
+  }
+  let type = m[2].trim(); let defaultValue = '';
+  const eq = type.indexOf('=');
+  if (eq >= 0) { defaultValue = type.slice(eq + 1).trim(); type = type.slice(0, eq).trim(); }
+  return { kind: 'property', name, file, line, startLine: line, endLine: line, ownerName: owner && owner.name, visibility, mode, type, defaultValue, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length) };
+}
+
+function v3ParseGetterSetter(raw, line, file, owner) {
+  const code = splitCodeAndCommentForNavigation(raw).code.trim();
+  const m = code.match(/^((?:(?:Public|Private|Protected)\s+)*)?(Get|Set)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*(?:As\s+([A-Za-z_][A-Za-z0-9_\.]*))?/i);
+  if (!m) return null;
+  const kind = m[2].toLowerCase();
+  const name = m[3];
+  const visibility = v3VisibilityFromPrefix(m[1] || '') || 'public';
+  const params = kind === 'set' ? v3ParseParams(m[4] || 'B4XPP_Value As Object') : [];
+  const returnType = kind === 'get' ? (m[5] || '') : '';
+  const methodName = (kind === 'get' ? 'get' : 'set') + name;
+  const method = { kind: 'method', name: methodName, file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length), ownerKind: owner ? owner.kind : 'module', ownerName: owner ? owner.name : path.basename(file, '.bx'), visibility, modifiers: [], params, paramsRaw: m[4] || '', returnType };
+  const property = { kind: 'property', name, file, line, startLine: line, endLine: line, ownerName: owner && owner.name, visibility, mode: kind === 'get' ? 'readonly' : 'writeonly', type: returnType || (params[0] && params[0].type) || '', range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length) };
+  return { kind, method, property };
+}
+
+function v3ParseFieldLine(raw, line, file, owner) {
+  const code = splitCodeAndCommentForNavigation(raw).code.trim();
+  const m = code.match(/^((?:Public|Private|Protected)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+As\s+((?:Poly\s+)?[A-Za-z_][A-Za-z0-9_\.]*)(?:\s*=.*)?$/i);
+  if (!m) return null;
+  const visibility = v3VisibilityFromPrefix(m[1] || '') || 'private';
+  let type = m[3].trim(); let polyType = '';
+  const poly = type.match(/^Poly\s+(.+)$/i);
+  if (poly) { polyType = poly[1].trim(); type = 'Object'; }
+  const name = m[2];
+  return { kind: 'field', name, file, line, startLine: line, endLine: line, ownerName: owner && owner.name, visibility, type, polyType, range: makeWordRange(raw, line, name, 0), fullRange: new vscode.Range(line, 0, line, raw.length) };
+}
+
+function v3ParseMethod(raw, line, file, owner) {
+  const ctor = raw.match(/^\s*#Constructor\s*(?:\(([^)]*)\))?/i);
+  if (ctor) {
+    return { kind: 'method', name: 'Initialize', file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, '#Constructor', 0), fullRange: new vscode.Range(line, 0, line, raw.length), ownerKind: owner ? owner.kind : 'module', ownerName: owner ? owner.name : path.basename(file, '.bx'), visibility: 'public', modifiers: ['constructor'], params: v3ParseParams(ctor[1] || ''), paramsRaw: ctor[1] || '', returnType: '' };
+  }
+  const m = raw.match(/^\s*((?:(?:Public|Private|Protected|Override|Virtual|Abstract|Final)\s+)*)Sub\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*(?:As\s+([A-Za-z_][A-Za-z0-9_\.]*))?/i);
+  if (!m) return null;
+  const tokens = (m[1] || '').trim().split(/\s+/).filter(Boolean).map(s => s.toLowerCase());
+  let visibility = ''; const modifiers = [];
+  for (const t of tokens) {
+    if (['public', 'private', 'protected'].includes(t)) { if (!visibility) visibility = t; }
+    else if (!modifiers.includes(t)) modifiers.push(t);
+  }
+  if (!visibility) visibility = owner && owner.kind === 'interface' ? 'public' : 'public';
+  return { kind: 'method', name: m[2], file, line, startLine: line, endLine: line, range: makeWordRange(raw, line, m[2], 0), fullRange: new vscode.Range(line, 0, line, raw.length), ownerKind: owner ? owner.kind : 'module', ownerName: owner ? owner.name : path.basename(file, '.bx'), visibility, modifiers, params: v3ParseParams(m[3] || ''), paramsRaw: m[3] || '', returnType: (m[4] || '').trim() };
+}
+
+function v3VisibilityFromPrefix(prefix) {
+  const m = String(prefix || '').match(/\b(Public|Private|Protected)\b/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function v3ParseParams(raw) {
+  if (!raw || !raw.trim()) return [];
+  return raw.split(',').map(part => {
+    const t = part.trim();
+    const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(\))?\s*(?:As\s+([A-Za-z_][A-Za-z0-9_\.]*))?/i);
+    return m ? { name: m[1], type: m[2] || '' } : { name: t, type: '' };
+  }).filter(p => p.name);
+}
+
+function collectV3SemanticDiagnostics(index) {
+  const out = new Map();
+  const add = (file, line, severity, message) => {
+    const uri = vscode.Uri.file(file).toString();
+    if (!out.has(uri)) out.set(uri, []);
+    out.get(uri).push({ severity, line: line + 1, message });
+  };
+  for (const dup of index.duplicates) add(dup.second.file, dup.second.line, 'error', `Duplicate B4X++ symbol '${dup.second.name}'. First declaration is in ${path.basename(dup.first.file)}.`);
+  for (const info of index.fileInfos.values()) {
+    for (const inc of info.includes) {
+      const resolved = resolveIncludeTargetForDocument({ uri: vscode.Uri.file(info.file) }, inc.value);
+      if (!resolved || !fs.existsSync(resolved)) add(info.file, inc.line, 'error', `#Include file not found: ${inc.value}`);
+    }
+    for (const cls of info.classes) {
+      if (cls.extendsName && !index.classes.has(cls.extendsName.toLowerCase())) add(cls.file, cls.line, 'error', `Parent class not found: ${cls.extendsName}.`);
+      for (const name of cls.implementsNames || []) if (!index.interfaces.has(name.toLowerCase())) add(cls.file, cls.line, 'error', `Interface not found: ${name}.`);
+      const seen = new Set();
+      let cur = cls;
+      while (cur && cur.extendsName) {
+        const key = cur.extendsName.toLowerCase();
+        if (seen.has(key)) { add(cls.file, cls.line, 'error', `Inheritance cycle detected at ${cur.extendsName}.`); break; }
+        seen.add(key); cur = index.classes.get(key);
+      }
+      for (const method of cls.methods.values()) {
+        if (method.modifiers.includes('override')) {
+          const parentMethod = v3FindAncestorMethod(index, cls.name, method.name);
+          if (!parentMethod) add(method.file, method.line, 'error', `Override target not found: ${method.name}.`);
+          else if (parentMethod.method.visibility === 'private') add(method.file, method.line, 'error', `Cannot override private method: ${parentMethod.owner.name}.${method.name}.`);
+          else if (!v3SameSignature(parentMethod.method, method)) add(method.file, method.line, 'error', `Override signature mismatch for ${method.name}.`);
+        }
+      }
+    }
+    for (let i = 0; i < info.lines.length; i++) {
+      const raw = info.lines[i];
+      const code = splitCodeAndCommentForNavigation(raw).code;
+      const owner = v3FindClassAt(index, info, i);
+      const typeDecl = code.match(/\b(?:Dim|Private|Public|Protected)\s+[A-Za-z_][A-Za-z0-9_]*\s+As\s+(?:Poly\s+)?([A-Za-z_][A-Za-z0-9_\.]*)/i);
+      if (typeDecl && !v3IsKnownType(index, typeDecl[1])) add(info.file, i, 'warning', `Unknown type '${typeDecl[1]}'. If this is an external B4X library type, this warning can be ignored until external library indexing is enabled.`);
+      const colorBad = code.match(/Props\.Get(?:Default)?\s*\(\s*"([A-Za-z_][A-Za-z0-9_]*)"/i);
+      if (colorBad && /color/i.test(colorBad[1]) && !/PaintOrColorToColor|DesignerColor/i.test(code)) add(info.file, i, 'warning', `Designer color '${colorBad[1]}' should be read with xui.PaintOrColorToColor(...) or a DesignerColor helper.`);
+      const accessRe = /\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)/g;
+      let m;
+      while ((m = accessRe.exec(code))) {
+        const receiver = m[1]; const member = m[2];
+        if (/^(xui|DateTime|File|Regex|Log|Array|Colors)$/i.test(receiver)) continue;
+        const resolved = v3ResolveReceiverType(index, info, i, receiver);
+        if (!resolved) continue;
+        const found = v3FindMemberInType(index, resolved.type, member);
+        if (!found) continue;
+        const visibility = found.symbol.visibility || 'public';
+        const ownerName = found.owner && found.owner.name;
+        if (!v3CanAccess(index, owner && owner.name, ownerName, visibility)) add(info.file, i, 'error', `Member is not accessible: ${ownerName}.${member} is ${visibility}.`);
+      }
+    }
+  }
+  return out;
+}
+
+function v3IsKnownType(index, typeName) {
+  const t = String(typeName || '').replace(/\(\)$/, '');
+  if (!t || B4X_V3_TYPES.has(t.toLowerCase())) return true;
+  return index.classes.has(t.toLowerCase()) || index.interfaces.has(t.toLowerCase()) || index.staticCodes.has(t.toLowerCase());
+}
+
+function v3SameSignature(a, b) {
+  const ap = a.params || v3ParseParams(a.paramsRaw || '');
+  const bp = b.params || v3ParseParams(b.paramsRaw || '');
+  if (ap.length !== bp.length) return false;
+  if ((a.returnType || '').toLowerCase() !== (b.returnType || '').toLowerCase()) return false;
+  for (let i = 0; i < ap.length; i++) if ((ap[i].type || '').toLowerCase() !== (bp[i].type || '').toLowerCase()) return false;
+  return true;
+}
+
+function v3CanAccess(index, currentClassName, ownerClassName, visibility) {
+  visibility = (visibility || 'public').toLowerCase();
+  if (visibility === 'public') return true;
+  if (!currentClassName || !ownerClassName) return false;
+  if (currentClassName.toLowerCase() === ownerClassName.toLowerCase()) return true;
+  if (visibility === 'protected') return v3IsDescendantOf(index, currentClassName, ownerClassName);
+  return false;
+}
+
+function v3IsDescendantOf(index, child, parent) {
+  let cls = index.classes.get(String(child || '').toLowerCase());
+  const target = String(parent || '').toLowerCase();
+  const seen = new Set();
+  while (cls && cls.extendsName) {
+    const key = cls.extendsName.toLowerCase();
+    if (key === target) return true;
+    if (seen.has(key)) return false;
+    seen.add(key); cls = index.classes.get(key);
+  }
+  return false;
+}
+
+function v3GetFileInfo(index, file) { return index.fileInfos.get(normalizePathKey(file)); }
+function v3FindClassAt(index, info, line) { return info ? info.classes.find(c => line >= c.startLine && line <= c.endLine) || null : null; }
+function v3FindMethodAt(info, line) { return info ? info.methods.find(m => line >= m.startLine && line <= m.endLine) || null : null; }
+
+function v3ResolveReceiverType(index, info, line, receiver) {
+  if (!receiver) return null;
+  const lname = receiver.toLowerCase();
+  if (index.staticCodes.has(lname)) return { type: receiver, staticOnly: true };
+  if (index.classes.has(lname)) return { type: receiver, staticOnly: true };
+  const vars = v3CollectVariables(index, info, line);
+  const variable = vars.get(lname);
+  if (variable) return { type: variable.assignedType || variable.polyType || variable.type, staticOnly: false };
+  return null;
+}
+
+function v3CollectVariables(index, info, line) {
+  const vars = new Map();
+  if (!info) return vars;
+  const cls = v3FindClassAt(index, info, line);
+  if (cls) {
+    for (const field of cls.fields.values()) vars.set(field.name.toLowerCase(), { ...field, assignedType: null });
+    for (const prop of cls.properties.values()) vars.set(prop.name.toLowerCase(), { ...prop, assignedType: null });
+  }
+  const method = v3FindMethodAt(info, line);
+  const start = method ? method.startLine : 0;
+  if (method) for (const p of method.params || []) vars.set(p.name.toLowerCase(), { name: p.name, type: p.type, assignedType: null });
+  for (let i = start; i <= line && i < info.lines.length; i++) {
+    const decl = parseVariableDeclarationLine(info.lines[i], i, info.file, true);
+    if (decl) { vars.set(decl.name.toLowerCase(), decl); continue; }
+    const code = splitCodeAndCommentForNavigation(info.lines[i]).code;
+    const assign = code.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/);
+    if (assign) {
+      const target = vars.get(assign[1].toLowerCase());
+      const src = vars.get(assign[2].toLowerCase());
+      if (target && src) target.assignedType = src.assignedType || src.polyType || src.type || null;
+    }
+  }
+  return vars;
+}
+
+function v3MemberCompletions(index, typeName, options = {}) {
+  const items = [];
+  const seen = new Set();
+  const addMethod = (method, owner) => {
+    const key = 'm:' + method.name.toLowerCase(); if (seen.has(key)) return; seen.add(key);
+    if (!v3CanAccess(index, options.currentClass, owner.name, method.visibility || 'public') && !(options.includePrivate && method.visibility === 'private') && !(options.includeProtected && method.visibility === 'protected')) return;
+    if (/^(Class_Globals|Process_Globals)$/i.test(method.name)) return;
+    items.push(methodCompletionItem(method, owner.name));
+  };
+  const addProp = (prop, owner) => {
+    const key = 'p:' + prop.name.toLowerCase(); if (seen.has(key)) return; seen.add(key);
+    if (!v3CanAccess(index, options.currentClass, owner.name, prop.visibility || 'public') && !(options.includePrivate && prop.visibility === 'private') && !(options.includeProtected && prop.visibility === 'protected')) return;
+    const item = new vscode.CompletionItem(prop.name, vscode.CompletionItemKind.Property);
+    item.detail = `${owner.name}.${prop.name} As ${prop.type || 'Object'} (${prop.visibility || 'public'})`;
+    items.push(item);
+  };
+  const addField = (field, owner) => {
+    const key = 'f:' + field.name.toLowerCase(); if (seen.has(key)) return; seen.add(key);
+    if (!v3CanAccess(index, options.currentClass, owner.name, field.visibility || 'private') && !(options.includePrivate && field.visibility === 'private') && !(options.includeProtected && field.visibility === 'protected')) return;
+    const item = new vscode.CompletionItem(field.name, vscode.CompletionItemKind.Field);
+    item.detail = `${owner.name}.${field.name} As ${field.type || 'Object'} (${field.visibility || 'private'})`;
+    items.push(item);
+  };
+  const owners = [];
+  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  if (cls) { owners.push(cls); owners.push(...v3Ancestors(index, cls.name)); }
+  const intf = index.interfaces.get(String(typeName || '').toLowerCase());
+  if (intf) owners.push(intf);
+  const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
+  if (stat) owners.push(stat);
+  for (const owner of owners) {
+    for (const prop of owner.properties.values()) addProp(prop, owner);
+    if (!options.staticOnly) for (const field of owner.fields.values()) addField(field, owner);
+    for (const method of owner.methods.values()) addMethod(method, owner);
+  }
+  if (!items.length) items.push(...v3BuiltinMembers('', typeName));
+  return items;
+}
+
+function v3TopLevelCompletions(index) {
+  const out = [];
+  for (const cls of index.classes.values()) out.push(v3Completion(cls.name, vscode.CompletionItemKind.Class, `B4X++ class${cls.extendsName ? ' extends ' + cls.extendsName : ''}`));
+  for (const intf of index.interfaces.values()) out.push(v3Completion(intf.name, vscode.CompletionItemKind.Interface, 'B4X++ interface'));
+  for (const mod of index.staticCodes.values()) out.push(v3Completion(mod.name, vscode.CompletionItemKind.Module, 'B4X++ static module'));
+  for (const t of Array.from(B4X_V3_TYPES.values()).slice(0, 80)) out.push(v3Completion(t, vscode.CompletionItemKind.Class, 'B4X / XUI type'));
+  return out;
+}
+
+function v3TypeCompletions(index) { return v3TopLevelCompletions(index); }
+function v3Completion(label, kind, detail) { const item = new vscode.CompletionItem(label, kind); item.detail = detail; return item; }
+function v3B4XKeywordCompletions() { return ['Dim','Sub','End Sub','If','Then','Else','For','Each','Next','Return','Wait For','Sleep','Try','Catch','Select','Case'].map(k => v3Completion(k, vscode.CompletionItemKind.Keyword, 'B4X keyword')); }
+
+function v3OverrideCompletions(index, cls) {
+  const out = [];
+  const seen = new Set();
+  for (const parent of v3Ancestors(index, cls.name)) {
+    for (const m of parent.methods.values()) {
+      const key = m.name.toLowerCase(); if (seen.has(key)) continue; seen.add(key);
+      if (m.visibility === 'private') continue;
+      if (m.modifiers.includes('final')) continue;
+      if (!m.modifiers.some(x => ['virtual', 'abstract', 'override'].includes(x))) continue;
+      const item = new vscode.CompletionItem(m.name, vscode.CompletionItemKind.Method);
+      item.detail = `Override ${parent.name}.${v3MethodDetail(m)}`;
+      item.insertText = new vscode.SnippetString(`Sub ${m.name}${m.paramsRaw ? '(' + m.paramsRaw + ')' : ''}${m.returnType ? ' As ' + m.returnType : ''}\n\t$0\nEnd Sub`);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+function v3FindMethodInType(index, typeName, methodName) {
+  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  if (cls) return v3FindMethodInClass(index, cls.name, methodName, { includeAncestors: true });
+  const intf = index.interfaces.get(String(typeName || '').toLowerCase());
+  if (intf && intf.methods.has(String(methodName || '').toLowerCase())) return { owner: intf, method: intf.methods.get(String(methodName || '').toLowerCase()) };
+  const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
+  if (stat && stat.methods.has(String(methodName || '').toLowerCase())) return { owner: stat, method: stat.methods.get(String(methodName || '').toLowerCase()) };
+  return null;
+}
+
+function v3FindMemberInType(index, typeName, memberName) {
+  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  const owners = cls ? [cls, ...v3Ancestors(index, cls.name)] : [];
+  const intf = index.interfaces.get(String(typeName || '').toLowerCase()); if (intf) owners.push(intf);
+  const stat = index.staticCodes.get(String(typeName || '').toLowerCase()); if (stat) owners.push(stat);
+  const key = String(memberName || '').toLowerCase();
+  for (const owner of owners) {
+    if (owner.properties.has(key)) return { owner, symbol: owner.properties.get(key) };
+    if (owner.fields.has(key)) return { owner, symbol: owner.fields.get(key) };
+    if (owner.methods.has(key)) return { owner, symbol: owner.methods.get(key) };
+    if (owner.properties.has(('get' + memberName).toLowerCase())) return { owner, symbol: owner.properties.get(('get' + memberName).toLowerCase()) };
+  }
+  return null;
+}
+
+function v3FindMethodInClass(index, className, methodName, opts = {}) {
+  const cls = index.classes.get(String(className || '').toLowerCase());
+  if (!cls) return null;
+  const owners = [cls]; if (opts.includeAncestors) owners.push(...v3Ancestors(index, cls.name));
+  const key = String(methodName || '').toLowerCase();
+  for (const owner of owners) if (owner.methods.has(key)) return { owner, method: owner.methods.get(key) };
+  return null;
+}
+
+function v3FindAncestorMethod(index, className, methodName) {
+  for (const parent of v3Ancestors(index, className)) if (parent.methods.has(String(methodName || '').toLowerCase())) return { owner: parent, method: parent.methods.get(String(methodName || '').toLowerCase()) };
+  return null;
+}
+
+function v3Ancestors(index, className) {
+  const out = []; const seen = new Set();
+  let cur = index.classes.get(String(className || '').toLowerCase());
+  while (cur && cur.extendsName) {
+    const key = cur.extendsName.toLowerCase(); if (seen.has(key)) break; seen.add(key);
+    cur = index.classes.get(key); if (cur) out.push(cur);
+  }
+  return out;
+}
+
+function v3ResolveSymbolAt(index, document, position) {
+  const info = v3GetFileInfo(index, document.uri.fsPath); if (!info) return null;
+  const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/); if (!range) return null;
+  const word = document.getText(range); const line = document.lineAt(position.line).text;
+  const dotted = getDottedMemberAt(line, range);
+  if (dotted && dotted.member.toLowerCase() === word.toLowerCase()) {
+    const receiver = dotted.receiver;
+    let found = null;
+    const currentClass = v3FindClassAt(index, info, position.line);
+    if (/^Super$/i.test(receiver) && currentClass && currentClass.extendsName) found = v3FindMethodInClass(index, currentClass.extendsName, word, { includeAncestors: true });
+    else if (/^(This|Me)$/i.test(receiver) && currentClass) found = v3FindMemberInType(index, currentClass.name, word);
+    else { const resolved = v3ResolveReceiverType(index, info, position.line, receiver); if (resolved) found = v3FindMemberInType(index, resolved.type, word) || v3FindMethodInType(index, resolved.type, word); }
+    const symbol = found && (found.symbol || found.method);
+    if (symbol) return { ...symbol, ownerName: found.owner && found.owner.name, range };
+  }
+  const owner = v3FindClassAt(index, info, position.line) || info.staticCodes.find(s => position.line >= s.startLine && position.line <= s.endLine) || info.interfaces.find(s => position.line >= s.startLine && position.line <= s.endLine);
+  if (owner) {
+    const key = word.toLowerCase();
+    if (owner.properties.has(key)) return { ...owner.properties.get(key), ownerName: owner.name, range };
+    if (owner.fields.has(key)) return { ...owner.fields.get(key), ownerName: owner.name, range };
+    if (owner.methods.has(key)) return { ...owner.methods.get(key), ownerName: owner.name, range };
+  }
+  const type = index.classes.get(word.toLowerCase()) || index.interfaces.get(word.toLowerCase()) || index.staticCodes.get(word.toLowerCase());
+  if (type) return { ...type, range };
+  return null;
+}
+
+function v3SymbolMarkdown(symbol) {
+  const visibility = symbol.visibility ? `**Visibility:** ${symbol.visibility}\n\n` : '';
+  if (symbol.kind === 'class') return `**class ${symbol.name}**${symbol.extendsName ? ` extends ${symbol.extendsName}` : ''}\n\n${symbol.file}`;
+  if (symbol.kind === 'interface') return `**interface ${symbol.name}**\n\n${symbol.file}`;
+  if (symbol.kind === 'staticCode') return `**static module ${symbol.name}**\n\n${symbol.file}`;
+  if (symbol.kind === 'property') return `**Property ${symbol.name} As ${symbol.type || 'Object'}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
+  if (symbol.kind === 'field') return `**Field ${symbol.name} As ${symbol.type || 'Object'}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
+  if (symbol.kind === 'method') return `**Sub ${v3MethodDetail(symbol)}**\n\n${visibility}${symbol.ownerName ? `Declared in: ${symbol.ownerName}` : ''}`;
+  return `**${symbol.name}**`;
+}
+
+function v3MethodDetail(m) { return `${m.name}${m.paramsRaw ? '(' + m.paramsRaw + ')' : ''}${m.returnType ? ' As ' + m.returnType : ''}`; }
+
+function v3ParseCallAt(document, position) {
+  const text = document.lineAt(position.line).text.slice(0, position.character);
+  const idx = text.lastIndexOf('('); if (idx < 0) return null;
+  const before = text.slice(0, idx);
+  const m = before.match(/(?:(\b[A-Za-z_][A-Za-z0-9_]*)\s*\.)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/);
+  if (!m) return null;
+  const argsText = text.slice(idx + 1);
+  let inString = false; let depth = 0; let comma = 0;
+  for (let i = 0; i < argsText.length; i++) {
+    const ch = argsText[i];
+    if (ch === '"') inString = !inString;
+    if (inString) continue;
+    if (ch === '(') depth++; else if (ch === ')' && depth > 0) depth--; else if (ch === ',' && depth === 0) comma++;
+  }
+  return { receiver: m[1] || '', name: m[2], argumentIndex: comma };
+}
+
+function v3BuiltinMembers(receiver, typeName) {
+  const key = String(typeName || receiver || '').toLowerCase();
+  const entries = B4X_V3_TYPE_MEMBERS.get(key) || [];
+  return entries.map(m => {
+    const item = new vscode.CompletionItem(m.name, m.kind === 'property' ? vscode.CompletionItemKind.Property : vscode.CompletionItemKind.Method);
+    item.detail = m.detail || 'B4X / XUI member';
+    return item;
+  });
+}
+
+function v3BuiltinMethodSignature(receiver, methodName) {
+  const lname = String(methodName || '').toLowerCase();
+  for (const list of B4X_V3_TYPE_MEMBERS.values()) {
+    const entry = list.find(x => x.name.toLowerCase() === lname && x.params);
+    if (entry) return { owner: { name: 'B4X' }, method: { kind: 'method', name: entry.name, params: entry.params, returnType: entry.returnType || '' } };
+  }
+  return null;
+}
+
+const B4X_V3_TYPES = new Map([
+  'string','int','long','float','double','boolean','object','list','map','b4xview','b4xcanvas','xui','bitmap','b4xbitmap','rect','b4xrect','b4xfont','resumablesub','label','button','pane','form','timer','jfx','javaobject','inputstream','outputstream','stringbuilder','color','paint','image','scrollview'
+].map(x => [x, x.replace(/(^|_)([a-z])/g, (_, a, b) => a + b.toUpperCase())]));
+
+const B4X_V3_TYPE_MEMBERS = new Map([
+  ['xui', [
+    { name: 'CreatePanel', params: [{ name: 'EventName', type: 'String' }], returnType: 'B4XView', detail: 'CreatePanel(EventName As String) As B4XView' },
+    { name: 'CreateDefaultFont', params: [{ name: 'Size', type: 'Float' }], returnType: 'B4XFont', detail: 'CreateDefaultFont(Size As Float) As B4XFont' },
+    { name: 'CreateDefaultBoldFont', params: [{ name: 'Size', type: 'Float' }], returnType: 'B4XFont', detail: 'CreateDefaultBoldFont(Size As Float) As B4XFont' },
+    { name: 'PaintOrColorToColor', params: [{ name: 'PaintOrColor', type: 'Object' }], returnType: 'Int', detail: 'PaintOrColorToColor(PaintOrColor As Object) As Int' },
+    { name: 'Color_RGB', params: [{ name: 'R', type: 'Int' }, { name: 'G', type: 'Int' }, { name: 'B', type: 'Int' }], returnType: 'Int' },
+    { name: 'Color_ARGB', params: [{ name: 'A', type: 'Int' }, { name: 'R', type: 'Int' }, { name: 'G', type: 'Int' }, { name: 'B', type: 'Int' }], returnType: 'Int' },
+    { name: 'Color_White', kind: 'property' }, { name: 'Color_Black', kind: 'property' }, { name: 'Color_Transparent', kind: 'property' }
+  ]],
+  ['b4xview', [
+    { name: 'AddView', params: [{ name: 'View', type: 'B4XView' }, { name: 'Left', type: 'Double' }, { name: 'Top', type: 'Double' }, { name: 'Width', type: 'Double' }, { name: 'Height', type: 'Double' }] },
+    { name: 'RemoveAllViews' }, { name: 'SetLayoutAnimated' }, { name: 'LoadLayout' }, { name: 'Width', kind: 'property' }, { name: 'Height', kind: 'property' }, { name: 'Color', kind: 'property' }, { name: 'Visible', kind: 'property' }, { name: 'Text', kind: 'property' }, { name: 'Tag', kind: 'property' }
+  ]],
+  ['b4xcanvas', [
+    { name: 'Initialize', params: [{ name: 'Target', type: 'B4XView' }] }, { name: 'Resize' }, { name: 'Invalidate' }, { name: 'ClearRect' }, { name: 'DrawCircle' }, { name: 'DrawLine' }, { name: 'DrawText' }, { name: 'Release' }
+  ]],
+  ['list', [{ name: 'Initialize' }, { name: 'Add' }, { name: 'Get' }, { name: 'Set' }, { name: 'RemoveAt' }, { name: 'Clear' }, { name: 'Size', kind: 'property' }, { name: 'IsInitialized' }]],
+  ['map', [{ name: 'Initialize' }, { name: 'Put' }, { name: 'Get' }, { name: 'GetDefault' }, { name: 'ContainsKey' }, { name: 'Remove' }, { name: 'Clear' }, { name: 'Size', kind: 'property' }, { name: 'IsInitialized' }]],
+  ['timer', [{ name: 'Initialize' }, { name: 'Enabled', kind: 'property' }, { name: 'Interval', kind: 'property' }]],
+  ['string', [{ name: 'Length', kind: 'property' }, { name: 'Trim' }, { name: 'ToLowerCase' }, { name: 'ToUpperCase' }, { name: 'SubString' }, { name: 'SubString2' }, { name: 'Contains' }, { name: 'Replace' }]]
+]);
 
 module.exports = { activate, deactivate };
