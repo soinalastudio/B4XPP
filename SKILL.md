@@ -1,3 +1,25 @@
+### v0.4 closure + validation baseline
+
+- Preferred closure syntax: `Dim callback As Closure = Sub (...) ... End Sub`. The legacy alias `As Sub` is still accepted.
+- Non-escaping local closures should be lifted to a generated `Private Sub`. Captured parent-scope variables are passed as extra arguments before the closure parameters.
+- Direct source calls such as `callback("hello")` should generate a direct call to the lifted method when the closure does not escape.
+- If a closure is passed, stored, returned, or otherwise escapes the local call site, generate a `B4XPPClosure` runtime value with captured values stored in a `List`; calls generate `Run`, `Run1`, `Run2`, etc.
+- `As Closure` in generated B4X signatures and declarations becomes `As B4XPPClosure`.
+- Syntax highlighting and snippets must recognize `Closure` as a B4X++ keyword/type.
+- v0.4.0 includes the validation, library indexing, editor, project settings, and closure improvements in one consolidated release.
+
+### v0.4.0 IntelliSense notes
+
+- New prefixed directives must be syntax-highlighted and completed without duplicating the leading `#`.
+- `Dim x As ...` type completion must include local B4X++ classes/interfaces/static modules, scalar language types, and external types from active dependencies. Do not hardcode XUI/B4X UI types such as `XUI`, `B4XView`, `B4XCanvas`, `B4XRect`, `B4XFont` or `Form`; they must come from `jXUI` / `XUI` / `iXUI` or another active library metadata file. Validation should follow the same policy, keeping only scalar/core language types unconditional.
+- For normal projects, `#ProjectB4JDependsOn` / `#ProjectB4ADependsOn` / `#ProjectB4iDependsOn` have priority when deciding which external types are visible.
+- For pure B4XLib projects, use `#B4XLibB4JDependsOn` / `#B4XLibB4ADependsOn` / `#B4XLibB4iDependsOn`.
+- Hover on an external type should show the library name, source module and external library file path.
+
+### Project settings UI + directive editor
+
+The `B4X++: Configure Project Settings` command now reloads existing workspace settings from `.vscode/settings.json`, including platform library folders such as `b4xpp.b4j.internalLibraryDirs` and `b4xpp.b4j.additionalLibraryDirs`. It also edits the main `.bx` project directives and provides a library picker for `#B4JDependsOn`, `#B4ADependsOn`, `#B4iDependsOn` and `#DependsOn`.
+
 # B4X++ Skill — AI Agent Guidance
 
 **Target version:** B4X++ v0.3.3, commit package `20260701-0810`  
@@ -1120,3 +1142,92 @@ B4X is sensitive to identifiers that collide with existing modules, reserved wor
 ## v0.3.5 note
 
 B4X++ property assignment sugar must also be rewritten inside one-line B4X statements such as `If condition Then Property = value`. The generated B4X must use `If condition Then setProperty(value)` because classic B4X does not treat `Property = value` as a property setter inside class modules.
+
+
+### Property read / write sugar
+
+B4X++ source can now use readable property syntax inside methods:
+
+```b4x
+If Broken Then Return 0
+Broken = True
+Visible = False
+Return Points
+```
+
+The generated B4X code uses classic getter/setter calls:
+
+```b4x
+If getBroken Then Return 0
+setBroken(True)
+setVisible(False)
+Return getPoints
+```
+
+This keeps `.bx` files readable while avoiding undeclared-variable errors in B4J generated `.bas` files.
+
+## Validation-core workflow
+
+For B4X++ tasks before v0.4, prefer fixing diagnostics in `.bx` first. Configure platform library XML / .b4xlib folders when checking external methods:
+
+```json
+{
+  "b4xpp.validation.strict": true,
+  "b4xpp.b4j.internalLibraryDirs": [],
+  "b4xpp.b4j.additionalLibraryDirs": ["C:/dev/b4j/libraries"]
+}
+```
+
+The validation core should catch unknown identifiers, obvious type mismatches, wrong argument counts for known methods, and XML-indexed static-code library calls before the generated B4X project is debugged in B4J/B4A/B4i.
+
+
+## .b4xlib indexing workflow
+
+B4X++ must treat `.b4xlib` files as first-class external libraries, not only `.jar + .xml` libraries. A `.b4xlib` is a ZIP archive. Read `manifest.txt` for version metadata and parse every internal `.bas` module. Index public Subs, public fields/properties, user `Type` declarations, `#Event`, and `#DesignerProperty`. Register each internal `.bas` file as a usable B4X type by module name. Example: `DesignerUtils.b4xlib` contains `DDD.bas`, so validation must know the type `DDD` and its public methods such as `GetViewsByClass`.
+
+Library settings: platform `internalLibraryDirs` / `additionalLibraryDirs` scan both `.xml` and `.b4xlib`. Do not create or use a separate `b4xpp.b4xlibLibraryDirs` setting; B4X uses the same internal/additional library folders for `.jar+xml` libraries and `.b4xlib` packages. Cache the external library index and refresh it only when folder contents change or when the user runs Refresh IntelliSense.
+
+
+## Unified cached library indexing workflow
+
+Use only platform library folders (`b4xpp.b4j.internalLibraryDirs`, `b4xpp.b4j.additionalLibraryDirs`, and their B4A/B4i equivalents) for external libraries. These same folders may contain `.xml` metadata files, `.jar` files, and `.b4xlib` packages. Do not add a separate b4xlib-specific setting. The library index must be cached by platform + folder paths + `.xml`/`.b4xlib` mtimes/sizes so B4X++ does not re-read hundreds of libraries during every validation pass. Clear this cache when the user explicitly refreshes IntelliSense.
+
+
+### Platform-scoped library indexing
+
+B4X++ now indexes library folders according to the active platform. A B4J project reads only `b4xpp.b4j.internalLibraryDirs` and `b4xpp.b4j.additionalLibraryDirs`; B4A and B4i do the same with their own settings. B4XLib projects can index multiple platform folders when `#SupportedPlatforms` declares B4A, B4J and/or B4i. Both `.xml` and `.b4xlib` files are read from those same platform folders.
+
+## Project Settings UI
+
+Use `B4X++: Configure Project Settings` to edit the current workspace settings through a VS Code WebView instead of manually editing `.vscode/settings.json`. The UI covers source/output folders, project folder, B4XLib output folder, package name, fallback platform, validation options, and B4J/B4A/B4i internal/additional library folders. Library folders follow standard B4X behavior: `.xml` and `.b4xlib` files are loaded from the same platform-specific internal/additional library directories. Saving clears the external library cache and refreshes IntelliSense diagnostics.
+
+## Native B4X project headers and B4XLib directive separation
+
+B4X++ now separates two different concepts:
+
+- Native IDE project libraries are written to `.b4j`, `.b4a` or `.b4i` as `Library1=...`, `Library2=...`. Use `#ProjectDependsOn`, `#ProjectB4JDependsOn`, `#ProjectB4ADependsOn`, and `#ProjectB4iDependsOn`.
+- B4XLib manifest metadata is written to `manifest.txt` inside the generated `.b4xlib`. Use `#B4XLibVersion`, `#B4XLibAuthor`, `#B4XLibSupportedPlatforms`, `#B4XLibDependsOn`, `#B4XLibB4JDependsOn`, `#B4XLibB4ADependsOn`, and `#B4XLibB4iDependsOn`.
+
+The Project Settings UI can also import libraries from an existing `.b4j/.b4a/.b4i` file header.
+
+## v0.4 closure syntax
+
+B4X++ supports source-level closures / anonymous `Sub` literals:
+
+```b4x
+Dim add As Closure = Sub(i As Int) As Int
+    Return a + i
+End Sub
+
+Log(add(5))
+```
+
+`As Sub` remains accepted as a compatibility alias, but new examples should prefer `Closure`.
+
+Generation rules:
+
+- Non-escaping local closures are lifted to generated `Private Sub` methods.
+- Captured parent-scope variables are passed to the generated method before normal closure parameters.
+- Escaping closures generate a `B4XPPClosure` runtime object and store captured values in a `List`.
+- Closure parameters generate as `B4XPPClosure` in classic B4X.
+- The VS Code grammar should color `Closure`, and type completion should include it as a B4X++ source type.

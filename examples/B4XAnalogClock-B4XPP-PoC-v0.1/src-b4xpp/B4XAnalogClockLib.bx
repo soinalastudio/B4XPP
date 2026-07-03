@@ -1,10 +1,11 @@
 #B4XLib B4XAnalogClock
-#Version 0.21
-#Author B4X++ Team
+#B4XLibVersion 0.21
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4A, B4J
-#B4ADependsOn XUI
-#B4JDependsOn jXUI
+#B4XLibSupportedPlatforms B4A, B4J
+#B4XLibB4ADependsOn XUI
+#ProjectB4JDependsOn jXUI
+#B4XLibB4JDependsOn jXUI
 
 #Include "core/B4XClockMath.bx"
 #Include "core/B4XClockDrawableBase.bx"

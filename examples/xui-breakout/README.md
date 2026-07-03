@@ -42,3 +42,26 @@ The example intentionally uses `CollidesWithBox(left, top, right, bottom)` inste
 ## Readability convention
 
 This example intentionally uses argument names such as `aX`, `aWidth`, `aColor`, `aGameWidth`, and `aBallCenterX`. It avoids parameters named exactly like properties, classes, methods or B4X keywords. Inside classes, the source uses property assignment sugar such as `X = aX`; the transpiler generates the B4X setter call `setX(aX)`.
+
+
+### Property read / write sugar
+
+B4X++ source can now use readable property syntax inside methods:
+
+```b4x
+If Broken Then Return 0
+Broken = True
+Visible = False
+Return Points
+```
+
+The generated B4X code uses classic getter/setter calls:
+
+```b4x
+If getBroken Then Return 0
+setBroken(True)
+setVisible(False)
+Return getPoints
+```
+
+This keeps `.bx` files readable while avoiding undeclared-variable errors in B4J generated `.bas` files.

@@ -4,11 +4,12 @@
 #MainModule Main
 
 #B4XLib B4XPPBreakout
-#Version 1.00
-#Author B4X++ Team
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4J
-#B4JDependsOn jXUI
+#B4XLibSupportedPlatforms B4J
+#ProjectB4JDependsOn jXUI
+#B4XLibB4JDependsOn jXUI
 
 #Include "contracts/IRenderable.bx"
 #Include "core/BreakoutMath.bx"

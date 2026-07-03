@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <doclet-version-NOT-library-version>1.00</doclet-version-NOT-library-version>
+  <dependsOn>jcore</dependsOn>
+  <dependsOn>jfx</dependsOn>
+  <dependsOn>json</dependsOn>
+  <class b4a_type="StaticCode">
+    <name>b4j.example.cssutils</name>
+    <shortname>CSSUtils</shortname>
+    <objectwrapper>java.lang.Class</objectwrapper>
+    <method>
+      <name DesignerName="ColorToHex">_colortohex</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Color</name>
+        <type>anywheresoftware.b4j.objects.JFX.PaintWrapper</type>
+      </parameter>
+    </method>
+    <method>
+      <name DesignerName="GetStyleProperty">_getstyleproperty</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Node</name>
+        <type>anywheresoftware.b4j.objects.NodeWrapper.ConcreteNodeWrapper</type>
+      </parameter>
+      <parameter>
+        <name>Key</name>
+        <type>String</type>
+      </parameter>
+    </method>
+    <method>
+      <name DesignerName="Process_Globals">_process_globals</name>
+      <returntype>String</returntype>
+    </method>
+    <method>
+      <name DesignerName="SetBackgroundColor">_setbackgroundcolor</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Node</name>
+        <type>anywheresoftware.b4j.objects.NodeWrapper.ConcreteNodeWrapper</type>
+      </parameter>
+      <parameter>
+        <name>Color</name>
+        <type>anywheresoftware.b4j.objects.JFX.PaintWrapper</type>
+      </parameter>
+    </method>
+    <method>
+      <name DesignerName="SetBackgroundImage">_setbackgroundimage</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Node</name>
+        <type>anywheresoftware.b4j.objects.NodeWrapper.ConcreteNodeWrapper</type>
+      </parameter>
+      <parameter>
+        <name>Dir</name>
+        <type>String</type>
+      </parameter>
+      <parameter>
+        <name>FileName</name>
+        <type>String</type>
+      </parameter>
+    </method>
+    <method>
+      <name DesignerName="SetBorder">_setborder</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Node</name>
+        <type>anywheresoftware.b4j.objects.NodeWrapper.ConcreteNodeWrapper</type>
+      </parameter>
+      <parameter>
+        <name>Width</name>
+        <type>double</type>
+      </parameter>
+      <parameter>
+        <name>Color</name>
+        <type>anywheresoftware.b4j.objects.JFX.PaintWrapper</type>
+      </parameter>
+      <parameter>
+        <name>CornerRadius</name>
+        <type>double</type>
+      </parameter>
+    </method>
+    <method>
+      <name DesignerName="SetStyleProperty">_setstyleproperty</name>
+      <returntype>String</returntype>
+      <parameter>
+        <name>Node</name>
+        <type>anywheresoftware.b4j.objects.NodeWrapper.ConcreteNodeWrapper</type>
+      </parameter>
+      <parameter>
+        <name>Key</name>
+        <type>String</type>
+      </parameter>
+      <parameter>
+        <name>Value</name>
+        <type>String</type>
+      </parameter>
+    </method>
+  </class>
+  <version>1.2</version>
+</root>

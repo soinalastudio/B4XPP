@@ -1,8 +1,8 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.3.5: inline property assignment sugar fix, scoped IntelliSense, navigation, references, rename, CustomView assistant, semantic diagnostics, source maps, overloads, project sync and .b4xlib builds.",
-  "version": "0.3.5",
+  "description": "VS Code extension for B4X++ v0.4.0: OOP flattening, property sugar, validation core, platform-scoped library indexing, Project Settings UI, native B4X project header awareness, B4XLib directives, library-driven IntelliSense, closure literals, project sync and .b4xlib builds.",
+  "version": "0.4.0",
   "publisher": "soinala-studio",
   "license": "MIT",
   "engines": {
@@ -46,57 +46,62 @@
     "commands": [
       {
         "command": "b4xpp.generateBas",
-        "title": "B4X++: Generate .bas Files",
+        "title": "Generate .bas Files",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.createExample",
-        "title": "B4X++: Create Example Project",
+        "title": "Create Example Project",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.showGeneratedFolder",
-        "title": "B4X++: Open Generated Folder",
+        "title": "Open Generated Folder",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.createIdeProject",
-        "title": "B4X++: Create B4A/B4J/B4i Project",
+        "title": "Create B4A/B4J/B4i Project",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.syncDirectiveProject",
-        "title": "B4X++: Sync #Project",
+        "title": "Sync #Project",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.buildB4XLib",
-        "title": "B4X++: Build .b4xlib",
+        "title": "Build .b4xlib",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.remapB4XErrors",
-        "title": "B4X++: Remap B4X Compiler / Runtime Errors",
+        "title": "Remap B4X Compiler / Runtime Errors",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.generateDebugBundle",
-        "title": "B4X++: Generate Debug Bundle",
+        "title": "Generate Debug Bundle",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.buildB4JWithRemap",
-        "title": "B4X++: Run B4J Build Command + Remap Errors",
+        "title": "Run B4J Build Command + Remap Errors",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.refreshIntelliSense",
-        "title": "B4X++: Refresh IntelliSense Index",
+        "title": "Refresh IntelliSense Index",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.configureProjectSettings",
+        "title": "Configure Project Settings",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.validateB4XLibCustomViews",
-        "title": "B4X++: Validate B4XLib / CustomViews",
+        "title": "Validate B4XLib / CustomViews",
         "category": "B4X++"
       }
     ],
@@ -167,8 +172,73 @@
           "type": "boolean",
           "default": true,
           "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, #Extends and CustomView color-property mistakes."
+        },
+        "b4xpp.validation.strict": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable stricter B4X++ validation: unknown identifiers and obvious semantic issues become errors before generating / building in B4X."
+        },
+        "b4xpp.platform": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "b4j",
+            "b4a",
+            "b4i"
+          ],
+          "description": "Target platform used for library metadata indexing (.xml and .b4xlib) when no #Project directive is available."
+        },
+        "b4xpp.b4j.internalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4J internal library folders containing .xml files and .b4xlib packages."
+        },
+        "b4xpp.b4j.additionalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4J additional library folders containing .xml files and .b4xlib packages."
+        },
+        "b4xpp.b4a.internalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4A internal library folders containing .xml files and .b4xlib packages."
+        },
+        "b4xpp.b4a.additionalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4A additional library folders containing .xml files and .b4xlib packages."
+        },
+        "b4xpp.b4i.internalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4i internal library folders containing .xml files and .b4xlib packages."
+        },
+        "b4xpp.b4i.additionalLibraryDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "B4i additional library folders containing .xml files and .b4xlib packages."
         }
       }
     }
-  }
+  },
+  "b4xppBuild": "settings-save-fix4"
 }

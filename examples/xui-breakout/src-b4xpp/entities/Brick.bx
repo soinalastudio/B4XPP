@@ -12,15 +12,15 @@
 
 Public Sub Hit As Int
     ' Breaks the brick once and returns the gained score.
-    If getBroken Then Return 0
+    If Broken Then Return 0
     Broken = True
     Visible = False
-    Return getPoints
+    Return Points
 End Sub
 
 Override Sub Render(aCvs As B4XCanvas)
     ' Draws a brick with a thin white border.
-    If getBroken Then Return
+    If Broken Then Return
     aCvs.DrawRect(EntityRect, getColor, True, 0)
     aCvs.DrawRect(EntityRect, 0xFFFFFFFF, False, 1dip)
 End Sub

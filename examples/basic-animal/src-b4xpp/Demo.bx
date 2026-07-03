@@ -4,10 +4,10 @@
 #MainModule Main
 
 #B4XLib AnimalComponents
-#Version 1.00
-#Author B4X++ Team
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4A, B4J, B4i
+#B4XLibSupportedPlatforms B4A, B4J, B4i
 
 #Include "contracts/IAnimal.bx"
 #Include "models/Animal.bx"

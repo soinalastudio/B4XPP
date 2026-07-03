@@ -4,14 +4,15 @@
 #MainModule Main
 
 #B4XLib B4XPPShowcaseComponents
-#Version 1.00
-#Author B4X++ Team
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4A, B4J, B4i
-#DependsOn XUI
-#B4JDependsOn jXUI
-#B4ADependsOn XUI
-#B4iDependsOn iXUI
+#B4XLibSupportedPlatforms B4A, B4J, B4i
+#ProjectB4JDependsOn jXUI
+#B4XLibDependsOn XUI
+#B4XLibB4JDependsOn jXUI
+#B4XLibB4ADependsOn XUI
+#B4XLibB4iDependsOn iXUI
 #LibraryFilesDir src-b4xpp/Files
 
 #Include "contracts/IRenderable.bx"

@@ -1,0 +1,84 @@
+AppType=StandardJava
+Build1=Default,b4xpp.examples.closures
+Group=Default Group
+Library1=jcore
+Module1=TaskRunner
+Module2=B4XPPClosure
+NumberOfFiles=0
+NumberOfLibraries=1
+NumberOfModules=2
+Version=10.0
+@EndOfDesignText@
+'Non-UI application (console / server application)
+#Region Project Attributes
+    #CommandLineArgs:
+    #MergeLibraries: True
+#End Region
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Log("=== B4X++ Closure Console Demo ===")
+    BasicGreeting
+    CapturedAdder
+    PassedClosure
+End Sub
+
+Private Sub BasicGreeting
+    ' B4XPP_LIFTED_CLOSURE say B4XPP_Closure_Main_BasicGreeting_1 
+
+    B4XPP_Closure_Main_BasicGreeting_1("anonymous Sub without capture")
+End Sub
+
+Private Sub CapturedAdder
+    Dim a As Int
+    a = 2
+
+    ' B4XPP_LIFTED_CLOSURE add B4XPP_Closure_Main_CapturedAdder_2 a
+
+    Log("2 + 5 = " & B4XPP_Closure_Main_CapturedAdder_2(a, 5))
+    a = 10
+    Log("10 + 5 = " & B4XPP_Closure_Main_CapturedAdder_2(a, 5))
+End Sub
+
+Private Sub PassedClosure
+    Dim runner As TaskRunner
+    runner.Initialize
+
+    Dim factor As Int = 3
+    ' B4X++ closure value: multiply -> B4XPP_Closure_Main_PassedClosure_3; captures: factor
+    Dim B4XPP_multiply_captures As List
+    B4XPP_multiply_captures.Initialize
+    B4XPP_multiply_captures.Add(factor)
+    Dim multiply As B4XPPClosure
+    multiply.Initialize(Me, "B4XPP_Closure_Main_PassedClosure_3", B4XPP_multiply_captures)
+
+    runner.Add("triple", multiply)
+    runner.RunAll(7)
+End Sub
+
+
+' B4X++ lifted closure body for say.
+Private Sub B4XPP_Closure_Main_BasicGreeting_1(msg As String)
+        Log("Message: " & msg)
+End Sub
+
+' B4X++ lifted closure body for add.
+Private Sub B4XPP_Closure_Main_CapturedAdder_2(a As Int, i As Int) As Int
+        Return a + i
+End Sub
+
+' B4X++ runtime closure body for multiply.
+Public Sub B4XPP_Closure_Main_PassedClosure_3(B4XPP_ctx As List) As Object
+	Dim B4XPP_caps As List = B4XPP_ctx.Get(0)
+	Dim B4XPP_args As List = B4XPP_ctx.Get(1)
+	Dim factor As Int = B4XPP_caps.Get(0)
+	Dim value As Int = B4XPP_args.Get(0)
+        Return value * factor
+End Sub
+
+'Return true to allow the default exceptions handler to handle the uncaught exception.
+Sub Application_Error (Error As Exception, StackTrace As String) As Boolean
+    Return True
+End Sub

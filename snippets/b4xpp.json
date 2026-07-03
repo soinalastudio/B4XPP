@@ -214,11 +214,11 @@
     "prefix": "b4xlib",
     "body": [
       "#B4XLib ${1:MyComponents}",
-      "#Version ${2:1.00}",
-      "#Author ${3:Your Name}",
+      "#B4XLibVersion ${2:1.00}",
+      "#B4XLibAuthor ${3:Your Name}",
       "#B4XLibDir b4x-libs",
-      "#SupportedPlatforms B4A, B4J, B4i",
-      "${4:#DependsOn XUI}",
+      "#B4XLibSupportedPlatforms B4A, B4J, B4i",
+      "${4:#B4XLibDependsOn XUI}",
       ""
     ],
     "description": "B4X library packaging directives"
@@ -232,10 +232,10 @@
       "#MainModule Main",
       "",
       "#B4XLib ${4:MyComponents}",
-      "#Version ${5:1.00}",
-      "#Author ${6:Your Name}",
+      "#B4XLibVersion ${5:1.00}",
+      "#B4XLibAuthor ${6:Your Name}",
       "#B4XLibDir b4x-libs",
-      "#SupportedPlatforms B4A, B4J, B4i",
+      "#B4XLibSupportedPlatforms B4A, B4J, B4i",
       ""
     ],
     "description": "Common project + .b4xlib header"
@@ -322,5 +322,22 @@
       "End Sub"
     ],
     "description": "Declare safe B4X++ method overloads with different parameter counts."
+  },
+  "B4X++ Closure Sub": {
+    "prefix": "closure",
+    "body": [
+      "Dim ${1:add} As Closure = Sub (${2:i As Int})${3: As Int}",
+      "\tReturn ${2/(\\w+).*/$1/}",
+      "End Sub",
+      "Log(${1}(${4:5}))"
+    ],
+    "description": "Declare a B4X++ closure / anonymous Sub literal. Generated as a lifted Private Sub when local, or B4XPPClosure when passed/stored."
+  },
+  "B4X++ Closure Type": {
+    "prefix": "sub-type",
+    "body": [
+      "Dim ${1:handler} As Closure"
+    ],
+    "description": "Declare a B4X++ closure variable. Alias As Sub is still accepted, but Closure is the preferred source type."
   }
 }

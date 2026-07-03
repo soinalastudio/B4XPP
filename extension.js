@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 const crypto = require('crypto');
-const { transpileText, transpileFiles, B4XPP_GENERATOR_VERSION } = require('./lib/transpiler');
+const { transpileText, transpileFiles, B4XPP_GENERATOR_VERSION, clearB4XLibraryIndexCache, parseB4XLibraryXml, parseB4XLibFile, parseB4XIdeProjectHeader, buildB4XLibraryIndex } = require('./lib/transpiler');
 
 let diagnosticCollection;
 let b4xppOutputChannel;
@@ -26,6 +26,7 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.generateDebugBundle', generateDebugBundleCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4JWithRemap', buildB4JWithRemapCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.refreshIntelliSense', refreshIntelliSenseCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.configureProjectSettings', () => configureProjectSettingsCommand(context)));
 
   const navigationProvider = new B4XPPSymbolNavigationProvider();
   context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, navigationProvider));
@@ -69,23 +70,752 @@ function getWorkspaceFolder() {
 }
 
 function getConfig() {
-  const cfg = vscode.workspace.getConfiguration('b4xpp');
+  const folder = getWorkspaceFolder();
+  const cfg = vscode.workspace.getConfiguration('b4xpp', folder ? folder.uri : undefined);
+  const rawSettings = folder ? readWorkspaceB4XPPSettings(folder) : {};
+  const read = (key, fallback) => {
+    const fullKey = `b4xpp.${key}`;
+    if (rawSettings && Object.prototype.hasOwnProperty.call(rawSettings, fullKey)) {
+      const value = rawSettings[fullKey];
+      if (Array.isArray(value)) return value.slice();
+      return value;
+    }
+    const value = cfg.get(key);
+    if (value === undefined || value === null) return fallback;
+    if (Array.isArray(value)) return value.slice();
+    return value;
+  };
   return {
-    sourceDir: cfg.get('sourceDir') || 'src-b4xpp',
-    outputDir: cfg.get('outputDir') || 'generated-b4x',
-    mainModuleName: cfg.get('mainModuleName') || '',
-    addGeneratedHeader: cfg.get('addGeneratedHeader') !== false,
-    overwriteGeneratedFiles: cfg.get('overwriteGeneratedFiles') !== false,
-    includeTimestamp: cfg.get('includeTimestamp') === true,
-    projectDir: cfg.get('projectDir') || 'b4x-ide-projects',
-    packageName: cfg.get('packageName') || 'b4xpp.example',
-    mobileMainModuleName: cfg.get('mobileMainModuleName') || 'B4XPPMain',
-    b4xlibDir: cfg.get('b4xlibDir') || 'b4x-libs',
-    b4jBuildCommand: cfg.get('b4jBuildCommand') || '',
-    writeLineSourceMap: cfg.get('writeLineSourceMap') !== false,
-    enableSemanticDiagnostics: cfg.get('enableSemanticDiagnostics') !== false,
+    sourceDir: read('sourceDir', 'src-b4xpp') || 'src-b4xpp',
+    outputDir: read('outputDir', 'generated-b4x') || 'generated-b4x',
+    mainModuleName: read('mainModuleName', '') || '',
+    addGeneratedHeader: read('addGeneratedHeader', true) !== false,
+    overwriteGeneratedFiles: read('overwriteGeneratedFiles', true) !== false,
+    includeTimestamp: read('includeTimestamp', false) === true,
+    projectDir: read('projectDir', 'b4x-ide-projects') || 'b4x-ide-projects',
+    packageName: read('packageName', 'b4xpp.example') || 'b4xpp.example',
+    mobileMainModuleName: read('mobileMainModuleName', 'B4XPPMain') || 'B4XPPMain',
+    b4xlibDir: read('b4xlibDir', 'b4x-libs') || 'b4x-libs',
+    b4jBuildCommand: read('b4jBuildCommand', '') || '',
+    writeLineSourceMap: read('writeLineSourceMap', true) !== false,
+    enableSemanticDiagnostics: read('enableSemanticDiagnostics', true) !== false,
+    validationStrict: read('validation.strict', false) === true,
+    platform: read('platform', 'auto') || 'auto',
+    b4jInternalLibraryDirs: read('b4j.internalLibraryDirs', []) || [],
+    b4jAdditionalLibraryDirs: read('b4j.additionalLibraryDirs', []) || [],
+    b4aInternalLibraryDirs: read('b4a.internalLibraryDirs', []) || [],
+    b4aAdditionalLibraryDirs: read('b4a.additionalLibraryDirs', []) || [],
+    b4iInternalLibraryDirs: read('b4i.internalLibraryDirs', []) || [],
+    b4iAdditionalLibraryDirs: read('b4i.additionalLibraryDirs', []) || [],
     generatorVersion: B4XPP_GENERATOR_VERSION
   };
+}
+
+
+async function configureProjectSettingsCommand(context) {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    'b4xppSettings',
+    'B4X++ Project Settings',
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')]
+    }
+  );
+
+  const state = getProjectSettingsState(folder);
+  panel.webview.html = renderProjectSettingsWebview(panel.webview, context.extensionUri, state);
+
+  panel.webview.onDidReceiveMessage(async (message) => {
+    if (!message || typeof message !== 'object') return;
+    try {
+      if (message.type === 'ready') {
+        b4xppOutputChannel && b4xppOutputChannel.appendLine('B4X++ Project Settings WebView ready.');
+      } else if (message.type === 'browseDir') {
+        const folders = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: true,
+          openLabel: 'Add folder'
+        });
+        if (!folders || folders.length === 0) return;
+        panel.webview.postMessage({
+          type: 'dirPicked',
+          key: message.key,
+          values: folders.map(f => f.fsPath)
+        });
+      } else if (message.type === 'save') {
+        const settingsInfo = await saveProjectSettings(folder, message.values || {});
+        const directiveInfo = await saveMainBxProjectDirectives(folder, message.values || {});
+        if (typeof clearB4XLibraryIndexCache === 'function') clearB4XLibraryIndexCache();
+        b4xppV3IndexCache = null;
+        b4xppV3IndexCacheKey = '';
+        b4xppV315ExternalTypeCache = null;
+        b4xppV315ExternalTypeCacheKey = '';
+        const nextState = getProjectSettingsState(folder);
+        vscode.window.showInformationMessage(`B4X++: settings saved to ${settingsInfo.settingsFile}`);
+        panel.webview.postMessage({ type: 'saveResult', ok: true, settings: settingsInfo, directives: directiveInfo });
+        panel.webview.postMessage({ type: 'state', state: nextState });
+        if (message.refreshIndex !== false) await vscode.commands.executeCommand('b4xpp.refreshIntelliSense');
+      } else if (message.type === 'reload') {
+        panel.webview.postMessage({ type: 'state', state: getProjectSettingsState(folder) });
+      } else if (message.type === 'loadLibraries') {
+        const tempState = getProjectSettingsState(folder, message.values || {});
+        tempState.directives = normalizeDirectiveValues(message.values && message.values.directives ? message.values.directives : tempState.directives);
+        tempState.availableLibraries = listAvailableLibrariesForProject(folder, tempState, tempState.directives);
+        panel.webview.postMessage({ type: 'libraries', libraries: tempState.availableLibraries });
+      } else if (message.type === 'importIdeProjectHeader') {
+        const picks = await vscode.window.showOpenDialog({
+          canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
+          filters: { 'B4X IDE project': ['b4j', 'b4a', 'b4i'] },
+          openLabel: 'Import B4X project header'
+        });
+        if (!picks || !picks.length) return;
+        const tempState = getProjectSettingsState(folder, message.values || {});
+        tempState.directives = normalizeDirectiveValues(message.values && message.values.directives ? message.values.directives : tempState.directives);
+        const text = fs.readFileSync(picks[0].fsPath, 'utf8');
+        const header = parseB4XIdeProjectHeader(text, picks[0].fsPath);
+        applyB4XIdeHeaderToDirectiveState(tempState.directives, header, picks[0].fsPath);
+        tempState.availableLibraries = listAvailableLibrariesForProject(folder, tempState, tempState.directives);
+        panel.webview.postMessage({ type: 'state', state: tempState });
+      } else if (message.type === 'openSettingsJson') {
+        await openWorkspaceSettingsJson(folder);
+      }
+    } catch (err) {
+      const messageText = err && err.message ? err.message : String(err);
+      try { panel.webview.postMessage({ type: 'saveResult', ok: false, error: messageText }); } catch {}
+      vscode.window.showErrorMessage(`B4X++ settings: ${messageText}`);
+    }
+  });
+}
+
+
+function getProjectSettingsState(folder, overrideValues) {
+  const cfg = vscode.workspace.getConfiguration('b4xpp', folder.uri);
+  const rawSettings = readWorkspaceB4XPPSettings(folder);
+  const keys = [
+    'sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'packageName', 'platform',
+    'validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles',
+    'b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs',
+    'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs',
+    'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'
+  ];
+  const values = {};
+  for (const key of keys) values[key] = getB4XPPWorkspaceValue(cfg, rawSettings, key);
+  if (overrideValues && typeof overrideValues === 'object') {
+    const normalized = normalizeProjectSettingsValues(overrideValues);
+    for (const [key, value] of Object.entries(normalized)) values[key] = value;
+  }
+  values.workspaceName = folder.name;
+  values.workspacePath = folder.uri.fsPath;
+  values.settingsJsonPath = path.join(folder.uri.fsPath, '.vscode', 'settings.json');
+  values.directives = readMainBxProjectDirectives(folder, values);
+  values.availableLibraries = listAvailableLibrariesForProject(folder, values, values.directives);
+  return values;
+}
+
+function getB4XPPWorkspaceValue(cfg, rawSettings, key) {
+  const fullKey = `b4xpp.${key}`;
+  if (rawSettings && Object.prototype.hasOwnProperty.call(rawSettings, fullKey)) return rawSettings[fullKey];
+  const value = cfg.get(key);
+  if (Array.isArray(value)) return value.slice();
+  return value;
+}
+
+function readWorkspaceB4XPPSettings(folder) {
+  const settingsFile = path.join(folder.uri.fsPath, '.vscode', 'settings.json');
+  if (!fs.existsSync(settingsFile)) return {};
+  try {
+    const raw = fs.readFileSync(settingsFile, 'utf8');
+    const parsed = parseJsoncObject(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ settings: could not parse ${settingsFile}: ${err.message}`);
+    return {};
+  }
+}
+
+function parseJsoncObject(text) {
+  let out = '';
+  let inString = false;
+  let stringQuote = '';
+  let escaped = false;
+  for (let i = 0; i < String(text || '').length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      out += ch;
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === stringQuote) { inString = false; stringQuote = ''; }
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inString = true; stringQuote = ch; out += ch; continue; }
+    if (ch === '/' && next === '/') { while (i < text.length && text[i] !== '\n') i++; out += '\n'; continue; }
+    if (ch === '/' && next === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++; i++; continue; }
+    out += ch;
+  }
+  out = out.replace(/,\s*([}\]])/g, '$1');
+  return JSON.parse(out || '{}');
+}
+
+function findMainBxFileForSettings(folder, values) {
+  const sourceDir = String((values && values.sourceDir) || 'src-b4xpp');
+  const base = path.isAbsolute(sourceDir) ? sourceDir : path.join(folder.uri.fsPath, sourceDir);
+  const files = [];
+  collectBxFilesForSettings(base, files);
+  if (files.length === 0) return null;
+  let best = files.find(f => /demo\.bx$/i.test(f));
+  if (best) return best;
+  best = files.find(f => {
+    try { return /^\s*#Project\b/im.test(fs.readFileSync(f, 'utf8')); } catch { return false; }
+  });
+  if (best) return best;
+  best = files.find(f => {
+    try { return /^\s*#MainModule\b/im.test(fs.readFileSync(f, 'utf8')); } catch { return false; }
+  });
+  return best || files[0];
+}
+
+function collectBxFilesForSettings(dir, out) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) collectBxFilesForSettings(full, out);
+    else if (/\.bx$/i.test(entry.name)) out.push(full);
+  }
+}
+
+function readMainBxProjectDirectives(folder, values) {
+  const file = findMainBxFileForSettings(folder, values);
+  const directives = defaultProjectDirectiveState();
+  if (!file) return directives;
+  directives.mainBxPath = path.relative(folder.uri.fsPath, file).replace(/\\/g, '/');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return directives; }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    let m;
+    if ((m = line.match(/^#Project\s+(\S+)(?:\s+(.+))?$/i))) { directives.projectPlatform = m[1].trim(); directives.projectName = (m[2] || '').trim(); }
+    else if ((m = line.match(/^#Package\s+(.+)$/i))) directives.packageName = m[1].trim();
+    else if ((m = line.match(/^#ProjectDir\s+(.+)$/i))) directives.projectDir = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#MainModule\s+(.+)$/i))) directives.mainModule = m[1].trim();
+
+    // Native IDE project libraries. These are emitted as Library1/Library2/... in .b4j/.b4a/.b4i.
+    else if ((m = line.match(/^#ProjectDependsOn\s+(.+)$/i))) directives.projectDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4JDependsOn\s+(.+)$/i))) directives.projectB4JDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4ADependsOn\s+(.+)$/i))) directives.projectB4ADependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4iDependsOn\s+(.+)$/i))) directives.projectB4iDependsOn.push(...splitDirectiveList(m[1]));
+
+    // B4XLib manifest metadata / dependencies. These are written to manifest.txt inside the .b4xlib.
+    else if ((m = line.match(/^#B4XLib\s+(.+)$/i))) directives.b4xLib = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibVersion\s+(.+)$/i))) directives.b4xLibVersion = m[1].trim();
+    else if ((m = line.match(/^#B4XLibAuthor\s+(.+)$/i))) directives.b4xLibAuthor = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibDir\s+(.+)$/i))) directives.b4xLibDir = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibSupportedPlatforms\s+(.+)$/i))) directives.b4xLibSupportedPlatforms = splitDirectiveList(m[1]);
+    else if ((m = line.match(/^#B4XLibDependsOn\s+(.+)$/i))) directives.b4xLibDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4JDependsOn\s+(.+)$/i))) directives.b4xLibB4JDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4ADependsOn\s+(.+)$/i))) directives.b4xLibB4ADependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4iDependsOn\s+(.+)$/i))) directives.b4xLibB4iDependsOn.push(...splitDirectiveList(m[1]));
+
+    // Legacy aliases. They are kept readable, but the UI rewrites them with explicit prefixes.
+    else if ((m = line.match(/^#Version\s+(.+)$/i))) { directives.version = m[1].trim(); if (!directives.b4xLibVersion) directives.b4xLibVersion = directives.version; }
+    else if ((m = line.match(/^#Author\s+(.+)$/i))) { directives.author = unquoteDirectiveValue(m[1]); if (!directives.b4xLibAuthor) directives.b4xLibAuthor = directives.author; }
+    else if ((m = line.match(/^#SupportedPlatforms\s+(.+)$/i))) { directives.supportedPlatforms = splitDirectiveList(m[1]); if (!directives.b4xLibSupportedPlatforms.length) directives.b4xLibSupportedPlatforms = directives.supportedPlatforms.slice(); }
+    else if ((m = line.match(/^#DependsOn\s+(.+)$/i))) { directives.dependsOn.push(...splitDirectiveList(m[1])); directives.projectDependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4JDependsOn\s+(.+)$/i))) { directives.b4jDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4JDependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4ADependsOn\s+(.+)$/i))) { directives.b4aDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4ADependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4iDependsOn\s+(.+)$/i))) { directives.b4iDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4iDependsOn.push(...splitDirectiveList(m[1])); }
+  }
+  for (const key of ['projectDependsOn','projectB4JDependsOn','projectB4ADependsOn','projectB4iDependsOn','b4xLibDependsOn','b4xLibB4JDependsOn','b4xLibB4ADependsOn','b4xLibB4iDependsOn','dependsOn','b4jDependsOn','b4aDependsOn','b4iDependsOn']) directives[key] = uniqueStrings(directives[key]);
+  directives.b4xLibSupportedPlatforms = uniqueStrings((directives.b4xLibSupportedPlatforms || []).map(normalizePlatformLabel).filter(Boolean));
+  directives.supportedPlatforms = uniqueStrings((directives.supportedPlatforms || []).map(normalizePlatformLabel).filter(Boolean));
+  return directives;
+}
+
+function defaultProjectDirectiveState() {
+  return {
+    mainBxPath: '', projectPlatform: '', projectName: '', packageName: '', projectDir: '', mainModule: '',
+    projectDependsOn: [], projectB4JDependsOn: [], projectB4ADependsOn: [], projectB4iDependsOn: [],
+    b4xLib: '', b4xLibVersion: '', b4xLibAuthor: '', b4xLibDir: '', b4xLibSupportedPlatforms: [],
+    b4xLibDependsOn: [], b4xLibB4JDependsOn: [], b4xLibB4ADependsOn: [], b4xLibB4iDependsOn: [],
+
+    // Legacy aliases read from older .bx files. The settings UI writes the new prefixed names.
+    version: '', author: '', supportedPlatforms: [],
+    dependsOn: [], b4jDependsOn: [], b4aDependsOn: [], b4iDependsOn: []
+  };
+}
+
+function unquoteDirectiveValue(value) {
+  return String(value || '').trim().replace(/^["']|["']$/g, '');
+}
+
+function splitDirectiveList(value) {
+  return String(value || '').split(/[;,]/g).map(v => unquoteDirectiveValue(v).trim()).filter(Boolean);
+}
+
+function normalizePlatformLabel(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'b4j' || v === 'b4j-ui' || v === 'b4j-nonui') return 'B4J';
+  if (v === 'b4a') return 'B4A';
+  if (v === 'b4i') return 'B4i';
+  return '';
+}
+
+function activePlatformsFromDirectiveState(values, directives) {
+  const d = directives || {};
+  const b4xlibSupported = (d.b4xLibSupportedPlatforms || d.supportedPlatforms || []).map(normalizePlatformLabel).filter(Boolean);
+  if (b4xlibSupported.length) return uniqueStrings(b4xlibSupported).map(v => v.toLowerCase());
+
+  // Infer supported platforms from platform-specific IDE-project or B4XLib dependencies.
+  const inferred = [];
+  if ((d.projectB4JDependsOn || d.b4xLibB4JDependsOn || d.b4jDependsOn || []).length) inferred.push('b4j');
+  if ((d.projectB4ADependsOn || d.b4xLibB4ADependsOn || d.b4aDependsOn || []).length) inferred.push('b4a');
+  if ((d.projectB4iDependsOn || d.b4xLibB4iDependsOn || d.b4iDependsOn || []).length) inferred.push('b4i');
+  if (inferred.length) return uniqueStrings(inferred);
+
+  const p = String(d.projectPlatform || (values && values.platform) || 'auto').toLowerCase();
+  if (p.includes('b4j')) return ['b4j'];
+  if (p.includes('b4a')) return ['b4a'];
+  if (p.includes('b4i')) return ['b4i'];
+  return ['b4j'];
+}
+
+function applyB4XIdeHeaderToDirectiveState(directives, header, filePath) {
+  if (!directives || !header) return directives;
+  const platform = String(header.platform || '').toLowerCase();
+  if (platform === 'b4j') directives.projectPlatform = /^standardjava$/i.test(header.appType || '') ? 'B4J-NonUI' : 'B4J-UI';
+  else if (platform === 'b4a') directives.projectPlatform = 'B4A';
+  else if (platform === 'b4i') directives.projectPlatform = 'B4i';
+  const baseName = sanitizeProjectName(path.basename(String(filePath || ''), path.extname(String(filePath || ''))));
+  if (baseName && !directives.projectName) directives.projectName = baseName;
+  if (header.packageName) directives.packageName = header.packageName;
+  const libs = uniqueStrings(header.libraries || []);
+  if (platform === 'b4j') directives.projectB4JDependsOn = uniqueStrings([...(directives.projectB4JDependsOn || []), ...libs]);
+  else if (platform === 'b4a') directives.projectB4ADependsOn = uniqueStrings([...(directives.projectB4ADependsOn || []), ...libs]);
+  else if (platform === 'b4i') directives.projectB4iDependsOn = uniqueStrings([...(directives.projectB4iDependsOn || []), ...libs]);
+  else directives.projectDependsOn = uniqueStrings([...(directives.projectDependsOn || []), ...libs]);
+  return directives;
+}
+
+
+function listAvailableLibrariesForProject(folder, values, directives) {
+  const normalized = normalizeProjectSettingsValues(values || {});
+  const dirsByPlatform = {
+    b4j: [...(normalized['b4j.internalLibraryDirs'] || []), ...(normalized['b4j.additionalLibraryDirs'] || [])],
+    b4a: [...(normalized['b4a.internalLibraryDirs'] || []), ...(normalized['b4a.additionalLibraryDirs'] || [])],
+    b4i: [...(normalized['b4i.internalLibraryDirs'] || []), ...(normalized['b4i.additionalLibraryDirs'] || [])]
+  };
+  const result = { b4j: [], b4a: [], b4i: [], active: [] };
+  for (const platform of Object.keys(dirsByPlatform)) result[platform] = scanLibraryNamesInDirs(dirsByPlatform[platform]);
+  const active = activePlatformsFromDirectiveState(values, directives);
+  const activeMap = new Map();
+  for (const platform of active) for (const item of result[platform] || []) activeMap.set(item.name.toLowerCase(), item);
+  result.active = Array.from(activeMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return result;
+}
+
+function scanLibraryNamesInDirs(dirs) {
+  const found = new Map();
+  for (const dir of normalizeDirectoryList(dirs)) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const file of entries) {
+      const full = path.join(dir, file);
+      if (!fs.existsSync(full)) continue;
+      try {
+        let name = '';
+        let kind = '';
+        if (/\.xml$/i.test(file)) {
+          const lib = parseB4XLibraryXml(full);
+          name = (lib && (lib.shortName || lib.name)) || path.basename(file, '.xml');
+          kind = 'xml';
+        } else if (/\.b4xlib$/i.test(file)) {
+          const lib = parseB4XLibFile(full);
+          name = (lib && lib.name) || path.basename(file, '.b4xlib');
+          kind = 'b4xlib';
+        } else continue;
+        if (!name) continue;
+        found.set(name.toLowerCase(), { name, kind, path: full });
+      } catch {}
+    }
+  }
+  return Array.from(found.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function saveProjectSettings(folder, values) {
+  const normalized = normalizeProjectSettingsValues(values || {});
+  const settingsDir = path.join(folder.uri.fsPath, '.vscode');
+  const settingsFile = path.join(settingsDir, 'settings.json');
+  fs.mkdirSync(settingsDir, { recursive: true });
+
+  let settings = {};
+  if (fs.existsSync(settingsFile)) {
+    try {
+      settings = parseJsoncObject(fs.readFileSync(settingsFile, 'utf8'));
+    } catch (err) {
+      throw new Error(`Could not parse ${settingsFile}: ${err.message}`);
+    }
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) settings = {};
+
+  for (const [key, value] of Object.entries(normalized)) {
+    settings[`b4xpp.${key}`] = value;
+  }
+
+  const serialized = JSON.stringify(settings, null, 4) + '\n';
+
+  // Direct disk write is the source of truth for workspace settings.
+  fs.writeFileSync(settingsFile, serialized, 'utf8');
+
+  // VS Code can run on file-backed workspaces where workspace.fs is more aware
+  // of the current extension host.  Write through it as well, so the WebView save
+  // works reliably in local, WSL and remote-like environments.
+  try {
+    const settingsUri = vscode.Uri.file(settingsFile);
+    await vscode.workspace.fs.writeFile(settingsUri, Buffer.from(serialized, 'utf8'));
+  } catch (err) {
+    // The fs.writeFileSync above already succeeded for normal desktop workspaces.
+    // Keep this as non-fatal but visible in the output channel.
+    b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ settings workspace.fs write warning: ${err && err.message ? err.message : err}`);
+  }
+
+  // Verify immediately.  This catches path/scope mistakes instead of silently
+  // refreshing the UI with defaults.
+  let verifyText = '';
+  try { verifyText = fs.readFileSync(settingsFile, 'utf8'); } catch (err) { throw new Error(`Could not verify ${settingsFile}: ${err.message}`); }
+  const verified = parseJsoncObject(verifyText);
+  for (const key of Object.keys(normalized)) {
+    const fullKey = `b4xpp.${key}`;
+    if (!Object.prototype.hasOwnProperty.call(verified, fullKey)) {
+      throw new Error(`Save verification failed: ${fullKey} was not written to ${settingsFile}`);
+    }
+  }
+
+  const keyCount = Object.keys(normalized).length;
+  b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ settings saved to ${settingsFile} (${keyCount} key(s)).`);
+  return { settingsFile, keyCount, bytes: Buffer.byteLength(serialized, 'utf8') };
+}
+
+async function saveMainBxProjectDirectives(folder, values) {
+  if (!values || !values.directives || typeof values.directives !== 'object') return { file: '', saved: false };
+  const directives = normalizeDirectiveValues(values.directives);
+  let relPath = String(directives.mainBxPath || '').trim();
+  let file = relPath ? path.join(folder.uri.fsPath, relPath) : findMainBxFileForSettings(folder, values);
+  if (!file || !fs.existsSync(file)) return { file: file || '', saved: false };
+  let text = fs.readFileSync(file, 'utf8');
+  text = updateProjectDirectiveText(text, directives);
+  fs.writeFileSync(file, text, 'utf8');
+  b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ directives saved to ${file}.`);
+  return { file, saved: true };
+}
+
+function normalizeDirectiveValues(input) {
+  const d = defaultProjectDirectiveState();
+  const src = input || {};
+  for (const key of ['mainBxPath','projectPlatform','projectName','packageName','projectDir','mainModule','b4xLib','b4xLibVersion','b4xLibAuthor','b4xLibDir']) {
+    d[key] = String(src[key] == null ? '' : src[key]).trim();
+  }
+  // Backward-compatible UI fields.
+  d.version = String(src.version == null ? '' : src.version).trim();
+  d.author = String(src.author == null ? '' : src.author).trim();
+  if (!d.b4xLibVersion && d.version) d.b4xLibVersion = d.version;
+  if (!d.b4xLibAuthor && d.author) d.b4xLibAuthor = d.author;
+
+  d.projectDependsOn = uniqueStrings(arrayOrDirectiveList(src.projectDependsOn || src.dependsOn));
+  d.projectB4JDependsOn = uniqueStrings(arrayOrDirectiveList(src.projectB4JDependsOn || src.b4jDependsOn));
+  d.projectB4ADependsOn = uniqueStrings(arrayOrDirectiveList(src.projectB4ADependsOn || src.b4aDependsOn));
+  d.projectB4iDependsOn = uniqueStrings(arrayOrDirectiveList(src.projectB4iDependsOn || src.b4iDependsOn));
+
+  d.b4xLibSupportedPlatforms = uniqueStrings(arrayOrDirectiveList(src.b4xLibSupportedPlatforms || src.supportedPlatforms).map(normalizePlatformLabel).filter(Boolean));
+  d.b4xLibDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4xLibDependsOn));
+  d.b4xLibB4JDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4xLibB4JDependsOn));
+  d.b4xLibB4ADependsOn = uniqueStrings(arrayOrDirectiveList(src.b4xLibB4ADependsOn));
+  d.b4xLibB4iDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4xLibB4iDependsOn));
+
+  // Legacy aliases kept in the state for old files, but not written back by the current explicit directive model.
+  d.supportedPlatforms = uniqueStrings(arrayOrDirectiveList(src.supportedPlatforms).map(normalizePlatformLabel).filter(Boolean));
+  d.dependsOn = uniqueStrings(arrayOrDirectiveList(src.dependsOn));
+  d.b4jDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4jDependsOn));
+  d.b4aDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4aDependsOn));
+  d.b4iDependsOn = uniqueStrings(arrayOrDirectiveList(src.b4iDependsOn));
+  return d;
+}
+
+function arrayOrDirectiveList(value) {
+  if (Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
+  return splitDirectiveList(value);
+}
+
+function updateProjectDirectiveText(text, directives) {
+  const managed = [
+    'Project','Package','ProjectDir','MainModule',
+    'ProjectDependsOn','ProjectB4JDependsOn','ProjectB4ADependsOn','ProjectB4iDependsOn',
+    'B4XLib','B4XLibVersion','B4XLibAuthor','B4XLibDir','B4XLibSupportedPlatforms',
+    'B4XLibDependsOn','B4XLibB4JDependsOn','B4XLibB4ADependsOn','B4XLibB4iDependsOn',
+    // legacy names removed/replaced when saving
+    'Version','Author','SupportedPlatforms','DependsOn','B4JDependsOn','B4ADependsOn','B4iDependsOn'
+  ];
+  const managedRegex = new RegExp('^\\s*#(?:' + managed.join('|') + ')\\b', 'i');
+  const originalLines = String(text || '').split(/\r?\n/);
+  const hadTrailingNewline = /\r?\n$/.test(String(text || ''));
+  const bodyLines = originalLines.filter(line => !managedRegex.test(line));
+  while (bodyLines.length && bodyLines[0].trim() === '') bodyLines.shift();
+  const header = buildProjectDirectiveLines(directives);
+  const next = [...header, '', ...bodyLines].join('\n');
+  return hadTrailingNewline ? next.replace(/\n*$/, '\n') : next;
+}
+
+function buildProjectDirectiveLines(d) {
+  const lines = [];
+  const projectPlatform = d.projectPlatform || '';
+  const projectName = d.projectName || '';
+  if (projectPlatform || projectName) lines.push(`#Project ${[projectPlatform || 'B4J-UI', projectName].filter(Boolean).join(' ')}`);
+  if (d.packageName) lines.push(`#Package ${d.packageName}`);
+  if (d.projectDir) lines.push(`#ProjectDir ${d.projectDir}`);
+  if (d.mainModule) lines.push(`#MainModule ${d.mainModule}`);
+  if (d.projectDependsOn && d.projectDependsOn.length) lines.push(`#ProjectDependsOn ${d.projectDependsOn.join(', ')}`);
+  if (d.projectB4JDependsOn && d.projectB4JDependsOn.length) lines.push(`#ProjectB4JDependsOn ${d.projectB4JDependsOn.join(', ')}`);
+  if (d.projectB4ADependsOn && d.projectB4ADependsOn.length) lines.push(`#ProjectB4ADependsOn ${d.projectB4ADependsOn.join(', ')}`);
+  if (d.projectB4iDependsOn && d.projectB4iDependsOn.length) lines.push(`#ProjectB4iDependsOn ${d.projectB4iDependsOn.join(', ')}`);
+  if (d.b4xLib || d.b4xLibVersion || d.b4xLibAuthor || d.b4xLibDir || (d.b4xLibSupportedPlatforms || []).length) {
+    lines.push('');
+  }
+  if (d.b4xLib) lines.push(`#B4XLib ${d.b4xLib}`);
+  if (d.b4xLibVersion) lines.push(`#B4XLibVersion ${d.b4xLibVersion}`);
+  if (d.b4xLibAuthor) lines.push(`#B4XLibAuthor ${d.b4xLibAuthor}`);
+  if (d.b4xLibDir) lines.push(`#B4XLibDir ${d.b4xLibDir}`);
+  if (d.b4xLibSupportedPlatforms && d.b4xLibSupportedPlatforms.length) lines.push(`#B4XLibSupportedPlatforms ${d.b4xLibSupportedPlatforms.join(', ')}`);
+  if (d.b4xLibDependsOn && d.b4xLibDependsOn.length) lines.push(`#B4XLibDependsOn ${d.b4xLibDependsOn.join(', ')}`);
+  if (d.b4xLibB4JDependsOn && d.b4xLibB4JDependsOn.length) lines.push(`#B4XLibB4JDependsOn ${d.b4xLibB4JDependsOn.join(', ')}`);
+  if (d.b4xLibB4ADependsOn && d.b4xLibB4ADependsOn.length) lines.push(`#B4XLibB4ADependsOn ${d.b4xLibB4ADependsOn.join(', ')}`);
+  if (d.b4xLibB4iDependsOn && d.b4xLibB4iDependsOn.length) lines.push(`#B4XLibB4iDependsOn ${d.b4xLibB4iDependsOn.join(', ')}`);
+  return lines;
+}
+
+function normalizeProjectSettingsValues(values) {
+  const out = {};
+  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'packageName', 'platform'];
+  const boolKeys = ['validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles'];
+  const arrayKeys = [
+    'b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs',
+    'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs',
+    'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'
+  ];
+  for (const key of stringKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = String(values[key] == null ? '' : values[key]).trim();
+  if (!['auto', 'b4j', 'b4a', 'b4i'].includes(out.platform)) out.platform = 'auto';
+  for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = values[key] === true || values[key] === 'true';
+  for (const key of arrayKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = normalizeDirectoryList(values[key]);
+  return out;
+}
+
+function normalizeDirectoryList(value) {
+  const items = Array.isArray(value) ? value : String(value || '').split(/\r?\n|;/g);
+  const seen = new Set();
+  const out = [];
+  for (let item of items) {
+    item = String(item || '').trim().replace(/^['"]|['"]$/g, '');
+    if (!item) continue;
+    const key = process.platform === 'win32' ? item.toLowerCase() : item;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+async function openWorkspaceSettingsJson(folder) {
+  const settingsDir = path.join(folder.uri.fsPath, '.vscode');
+  const settingsFile = path.join(settingsDir, 'settings.json');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  if (!fs.existsSync(settingsFile)) fs.writeFileSync(settingsFile, '{\n}\n', 'utf8');
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(settingsFile));
+  await vscode.window.showTextDocument(doc);
+}
+
+function renderProjectSettingsWebview(webview, extensionUri, state) {
+  const nonce = makeNonce();
+  const safeState = state || {};
+  const safeDirectives = safeState.directives || {};
+  const json = JSON.stringify(safeState).replace(/</g, '\\u003c');
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'project-settings.js'));
+  const valueAttr = (key) => escapeHtml(safeState[key] == null ? '' : safeState[key]);
+  const dirValueAttr = (key) => escapeHtml(safeDirectives[key] == null ? '' : safeDirectives[key]);
+  const checkedAttr = (key) => safeState[key] === true ? ' checked' : '';
+  const selectAttr = (key, value) => String(safeState[key] == null ? '' : safeState[key]).toLowerCase() === String(value).toLowerCase() ? ' selected' : '';
+  const dirSelectAttr = (key, value) => String(safeDirectives[key] == null ? '' : safeDirectives[key]).toLowerCase() === String(value).toLowerCase() ? ' selected' : '';
+  const arrayTextarea = (key) => escapeHtml((Array.isArray(safeState[key]) ? safeState[key] : []).join('\n'));
+  const dirArrayTextarea = (key) => escapeHtml((Array.isArray(safeDirectives[key]) ? safeDirectives[key] : []).join('\n'));
+  const platformChecked = (platform) => (safeDirectives.b4xLibSupportedPlatforms || safeDirectives.supportedPlatforms || []).map(v => String(v).toLowerCase()).includes(String(platform).toLowerCase()) ? ' checked' : '';
+  return String.raw`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};">
+<title>B4X++ Project Settings</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; }
+  header { padding: 18px 22px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
+  h1 { margin: 0 0 6px; font-size: 20px; }
+  .hint { color: var(--vscode-descriptionForeground); line-height: 1.45; }
+  main { padding: 18px 22px 28px; max-width: 1050px; }
+  section { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px; margin-bottom: 14px; background: var(--vscode-editorWidget-background); }
+  h2 { margin: 0 0 12px; font-size: 15px; }
+  label { display: block; font-weight: 600; margin: 11px 0 5px; }
+  input[type="text"], select, textarea { width: 100%; box-sizing: border-box; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 7px 8px; font-family: var(--vscode-font-family); }
+  textarea { min-height: 76px; resize: vertical; font-family: var(--vscode-editor-font-family); }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .checks { display: grid; gap: 8px; margin-top: 8px; }
+  .check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+  .libs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .libbox { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px; }
+  .libbox h3 { margin: 0 0 8px; font-size: 13px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  button { border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+  button:hover { background: var(--vscode-button-hoverBackground); }
+  button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+  button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .actions { position: sticky; bottom: 0; display: flex; gap: 8px; justify-content: flex-end; padding: 12px 22px; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+  code { font-family: var(--vscode-editor-font-family); color: var(--vscode-textPreformat-foreground); }
+  .small { font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .pillgrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .pill { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--vscode-panel-border); border-radius: 999px; padding: 5px 9px; font-weight: 400; }
+  .liblist { max-height: 230px; overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); }
+  .librow { display: flex; gap: 7px; align-items: center; padding: 3px 0; font-weight: 400; }
+  .librow code { font-size: 11px; opacity: .75; }
+  @media (max-width: 850px) { .grid, .libs { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>B4X++ Project Settings <span class="small">0.4.0 settings-save-fix6</span></h1>
+  <div class="hint">Workspace: <code id="workspacePath"></code><br>These values are saved to <code>.vscode/settings.json</code> for the current project only.<br>Settings file: <code id="settingsJsonPath"></code></div>
+</header>
+<main>
+  <section>
+    <h2>Project</h2>
+    <div class="grid">
+      <div><label>Source folder</label><input id="sourceDir" data-key="sourceDir" type="text" value="${valueAttr('sourceDir')}"></div>
+      <div><label>Generated .bas folder</label><input id="outputDir" data-key="outputDir" type="text" value="${valueAttr('outputDir')}"></div>
+      <div><label>B4X IDE projects folder</label><input id="projectDir" data-key="projectDir" type="text" value="${valueAttr('projectDir')}"></div>
+      <div><label>B4XLib output folder</label><input id="b4xlibDir" data-key="b4xlibDir" type="text" value="${valueAttr('b4xlibDir')}"></div>
+      <div><label>Default package name</label><input id="packageName" data-key="packageName" type="text" value="${valueAttr('packageName')}"></div>
+      <div><label>Fallback platform</label><select id="platform" data-key="platform"><option value="auto"${selectAttr('platform', 'auto')}>auto</option><option value="b4j"${selectAttr('platform', 'b4j')}>B4J</option><option value="b4a"${selectAttr('platform', 'b4a')}>B4A</option><option value="b4i"${selectAttr('platform', 'b4i')}>B4i</option></select><div class="small">Used only when no #Project or platform-specific #...DependsOn directive can resolve the platform.</div></div>
+    </div>
+    <div class="checks">
+      <label class="check"><input id="validationStrict" data-key="validation.strict" type="checkbox"${checkedAttr('validation.strict')}> Strict validation before generation/build</label>
+      <label class="check"><input id="semanticDiagnostics" data-key="enableSemanticDiagnostics" type="checkbox"${checkedAttr('enableSemanticDiagnostics')}> Enable semantic diagnostics in VS Code</label>
+      <label class="check"><input id="addGeneratedHeader" data-key="addGeneratedHeader" type="checkbox"${checkedAttr('addGeneratedHeader')}> Add generated header</label>
+      <label class="check"><input id="overwriteGeneratedFiles" data-key="overwriteGeneratedFiles" type="checkbox"${checkedAttr('overwriteGeneratedFiles')}> Overwrite generated files</label>
+    </div>
+  </section>
+  <section>
+    <h2>Main .bx directives</h2>
+    <p class="hint">Project directives generate the native <code>.b4j</code>, <code>.b4a</code> or <code>.b4i</code> header (<code>Library1=...</code>, <code>Module1=...</code>, <code>Version=...</code>). B4XLib directives are separate and are written to the <code>manifest.txt</code> inside the generated <code>.b4xlib</code>.</p>
+    <div class="grid">
+      <div><label>Main .bx file</label><input id="dir_mainBxPath" data-dir-key="mainBxPath" type="text" readonly value="${dirValueAttr('mainBxPath')}"><div class="small">Detected from the source folder. Open another .bx file before opening this UI if needed.</div></div>
+      <div><label>#Project platform</label><select id="dir_projectPlatform" data-dir-key="projectPlatform"><option value=""${dirSelectAttr('projectPlatform', '')}>keep / none</option><option value="B4J-UI"${dirSelectAttr('projectPlatform', 'B4J-UI')}>B4J-UI</option><option value="B4J-NonUI"${dirSelectAttr('projectPlatform', 'B4J-NonUI')}>B4J-NonUI</option><option value="B4A"${dirSelectAttr('projectPlatform', 'B4A')}>B4A</option><option value="B4i"${dirSelectAttr('projectPlatform', 'B4i')}>B4i</option></select></div>
+      <div><label>#Project name</label><input id="dir_projectName" data-dir-key="projectName" type="text" value="${dirValueAttr('projectName')}"></div>
+      <div><label>#Package</label><input id="dir_packageName" data-dir-key="packageName" type="text" value="${dirValueAttr('packageName')}"></div>
+      <div><label>#ProjectDir</label><input id="dir_projectDir" data-dir-key="projectDir" type="text" value="${dirValueAttr('projectDir')}"></div>
+      <div><label>#MainModule</label><input id="dir_mainModule" data-dir-key="mainModule" type="text" value="${dirValueAttr('mainModule')}"></div>
+    </div>
+    <h2 style="margin-top:18px">Native B4X IDE project libraries</h2>
+    <p class="small">These libraries are written to generated project headers as <code>Library1=...</code>, <code>Library2=...</code>. They are not B4XLib manifest metadata.</p>
+    <div class="row" style="margin:8px 0 4px"><button type="button" class="secondary" id="importIdeHeader">Import libraries from existing .b4j/.b4a/.b4i...</button></div>
+    <div class="grid">
+      <div><label>#ProjectDependsOn</label><textarea id="dir_projectDependsOn" data-dir-array="projectDependsOn" spellcheck="false">${dirArrayTextarea('projectDependsOn')}</textarea></div>
+      <div><label>#ProjectB4JDependsOn</label><textarea id="dir_projectB4JDependsOn" data-dir-array="projectB4JDependsOn" spellcheck="false">${dirArrayTextarea('projectB4JDependsOn')}</textarea></div>
+      <div><label>#ProjectB4ADependsOn</label><textarea id="dir_projectB4ADependsOn" data-dir-array="projectB4ADependsOn" spellcheck="false">${dirArrayTextarea('projectB4ADependsOn')}</textarea></div>
+      <div><label>#ProjectB4iDependsOn</label><textarea id="dir_projectB4iDependsOn" data-dir-array="projectB4iDependsOn" spellcheck="false">${dirArrayTextarea('projectB4iDependsOn')}</textarea></div>
+    </div>
+    <h2 style="margin-top:18px">B4XLib manifest metadata</h2>
+    <div class="grid">
+      <div><label>#B4XLib</label><input id="dir_b4xLib" data-dir-key="b4xLib" type="text" value="${dirValueAttr('b4xLib')}"></div>
+      <div><label>#B4XLibDir</label><input id="dir_b4xLibDir" data-dir-key="b4xLibDir" type="text" value="${dirValueAttr('b4xLibDir')}"></div>
+      <div><label>#B4XLibVersion</label><input id="dir_b4xLibVersion" data-dir-key="b4xLibVersion" type="text" value="${dirValueAttr('b4xLibVersion')}"></div>
+      <div><label>#B4XLibAuthor</label><input id="dir_b4xLibAuthor" data-dir-key="b4xLibAuthor" type="text" value="${dirValueAttr('b4xLibAuthor')}"></div>
+    </div>
+    <label>#B4XLibSupportedPlatforms <span class="small">optional B4X++ metadata; when omitted, platforms are inferred from <code>#B4XLibB4JDependsOn</code> / <code>#B4XLibB4ADependsOn</code> / <code>#B4XLibB4iDependsOn</code>.</span></label>
+    <div class="pillgrid">
+      <label class="pill"><input type="checkbox" data-platform-choice="B4J"${platformChecked('B4J')}> B4J</label>
+      <label class="pill"><input type="checkbox" data-platform-choice="B4A"${platformChecked('B4A')}> B4A</label>
+      <label class="pill"><input type="checkbox" data-platform-choice="B4i"${platformChecked('B4i')}> B4i</label>
+    </div>
+    <div class="grid">
+      <div><label>#B4XLibDependsOn</label><textarea id="dir_b4xLibDependsOn" data-dir-array="b4xLibDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibDependsOn')}</textarea></div>
+      <div><label>#B4XLibB4JDependsOn</label><textarea id="dir_b4xLibB4JDependsOn" data-dir-array="b4xLibB4JDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4JDependsOn')}</textarea></div>
+      <div><label>#B4XLibB4ADependsOn</label><textarea id="dir_b4xLibB4ADependsOn" data-dir-array="b4xLibB4ADependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4ADependsOn')}</textarea></div>
+      <div><label>#B4XLibB4iDependsOn</label><textarea id="dir_b4xLibB4iDependsOn" data-dir-array="b4xLibB4iDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4iDependsOn')}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button type="button" class="secondary" id="reloadLibraries">Reload libraries from configured folders</button></div>
+    <label>Available libraries for the active platform(s)</label>
+    <div id="availableLibraries" class="liblist"><span class="small">No library index loaded yet.</span></div>
+    <div class="small">Checking a library adds it to the native IDE project library directive (<code>#ProjectB4JDependsOn</code>, <code>#ProjectB4ADependsOn</code>, or <code>#ProjectB4iDependsOn</code>). B4XLib dependencies stay in the dedicated B4XLib text boxes.</div>
+  </section>
+  <section>
+    <h2>Library directories</h2>
+    <p class="hint">Use the real B4X model: each platform has internal and additional library folders. Both <code>.jar + .xml</code> and <code>.b4xlib</code> are read from these same folders. For B4XLib projects, B4X++ loads the platforms declared by <code>#B4XLibSupportedPlatforms</code> or inferred from platform-specific B4XLib dependency directives.</p>
+    <div class="libs">
+      ${renderPlatformLibraryBox('b4j', 'B4J', safeState)}
+      ${renderPlatformLibraryBox('b4a', 'B4A', safeState)}
+      ${renderPlatformLibraryBox('b4i', 'B4i', safeState)}
+    </div>
+  </section>
+</main>
+<div id="saveStatus" class="hint" style="padding:0 22px 8px;text-align:right"></div>
+<div class="actions">
+  <button type="button" class="secondary" id="reload">Reload</button>
+  <button type="button" class="secondary" id="openJson">Open settings.json</button>
+  <button type="button" id="save">Save and refresh index</button>
+</div>
+<textarea id="b4xpp-state-json" hidden>${escapeHtml(json)}</textarea>
+<script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
+}
+
+function renderPlatformLibraryBox(platform, label, state) {
+  const internalKey = `${platform}.internalLibraryDirs`;
+  const additionalKey = `${platform}.additionalLibraryDirs`;
+  const internalId = internalKey.replace(/\./g, '_');
+  const additionalId = additionalKey.replace(/\./g, '_');
+  return `<div class="libbox">
+    <h3>${escapeHtml(label)}</h3>
+    <label>Internal library folders</label>
+    <textarea id="${internalId}" data-key="${internalKey}" spellcheck="false">${escapeHtml((Array.isArray(state && state[internalKey]) ? state[internalKey] : []).join('\n'))}</textarea>
+    <div class="row"><button type="button" class="secondary" data-browse="${internalKey}">Add internal folder…</button></div>
+    <label>Additional library folders</label>
+    <textarea id="${additionalId}" data-key="${additionalKey}" spellcheck="false">${escapeHtml((Array.isArray(state && state[additionalKey]) ? state[additionalKey] : []).join('\n'))}</textarea>
+    <div class="row"><button type="button" class="secondary" data-browse="${additionalKey}">Add additional folder…</button></div>
+  </div>`;
+}
+
+function makeNonce() {
+  let text = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) text += chars.charAt(Math.floor(Math.random() * chars.length));
+  return text;
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function ensureSourceFolderOrOfferExample(root, config) {
@@ -628,6 +1358,11 @@ async function createExampleCommand() {
       value: 'showcase-to-src'
     },
     {
+      label: 'Closure console sample: anonymous Sub / captured variables',
+      description: `Copy into ${config.sourceDir}/ and open Demo.bx`,
+      value: 'closure-to-src'
+    },
+    {
       label: 'OOP game sample: Dungeon Arena',
       description: `Copy into ${config.sourceDir}/ and open Demo.bx`,
       value: 'game-to-src'
@@ -639,7 +1374,7 @@ async function createExampleCommand() {
     },
     {
       label: 'Create all GitHub examples',
-      description: 'Copy basic-animal, language-showcase, oop-dungeon-arena and xui-breakout under examples/',
+      description: 'Copy basic-animal, language-showcase, closure-console, oop-dungeon-arena and xui-breakout under examples/',
       value: 'both-to-examples'
     }
   ], {
@@ -651,6 +1386,7 @@ async function createExampleCommand() {
     const examplesRoot = path.join(root, 'examples');
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'basic-animal', config.sourceDir), getBasicAnimalTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'language-showcase', config.sourceDir), getLanguageShowcaseTemplate(), root);
+    await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'closure-console', config.sourceDir), getClosureConsoleTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'oop-dungeon-arena', config.sourceDir), getDungeonArenaTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'xui-breakout', config.sourceDir), getBreakoutTemplate(), root);
     const readmePath = path.join(examplesRoot, 'README.md');
@@ -663,11 +1399,13 @@ async function createExampleCommand() {
 
   const template = choice.value === 'showcase-to-src'
     ? getLanguageShowcaseTemplate()
-    : choice.value === 'game-to-src'
-      ? getDungeonArenaTemplate()
-      : choice.value === 'breakout-to-src'
-        ? getBreakoutTemplate()
-        : getBasicAnimalTemplate();
+    : choice.value === 'closure-to-src'
+      ? getClosureConsoleTemplate()
+      : choice.value === 'game-to-src'
+        ? getDungeonArenaTemplate()
+        : choice.value === 'breakout-to-src'
+          ? getBreakoutTemplate()
+          : getBasicAnimalTemplate();
   const sourceRoot = path.join(root, config.sourceDir);
   await writeExampleTemplateWithPrompt(sourceRoot, template, root);
   const demoPath = path.join(sourceRoot, 'Demo.bx');
@@ -810,10 +1548,19 @@ function parseB4XLibDirectives(root, config, files) {
       const line = splitCodeAndCommentForNavigation(raw).code.trim();
       let m;
       if ((m = line.match(/^#B4XLib\s+(.+)$/i))) lib.name = sanitizeProjectName(m[1].trim().replace(/^['"]|['"]$/g, '')) || lib.name;
-      else if ((m = line.match(/^#Version\s+(.+)$/i))) lib.version = m[1].trim().replace(/^['"]|['"]$/g, '') || lib.version;
-      else if ((m = line.match(/^#Author\s+(.+)$/i))) lib.author = m[1].trim().replace(/^['"]|['"]$/g, '');
+      else if ((m = line.match(/^#B4XLibVersion\s+(.+)$/i))) lib.version = m[1].trim().replace(/^['"]|['"]$/g, '') || lib.version;
+      else if ((m = line.match(/^#B4XLibAuthor\s+(.+)$/i))) lib.author = m[1].trim().replace(/^['"]|['"]$/g, '');
       else if ((m = line.match(/^#B4XLibDir\s+(.+)$/i))) lib.dir = m[1].trim().replace(/^['"]|['"]$/g, '') || lib.dir;
       else if ((m = line.match(/^#LibraryFilesDir\s+(.+)$/i))) lib.filesDir = m[1].trim().replace(/^['"]|['"]$/g, '');
+      else if ((m = line.match(/^#B4XLibDependsOn\s+(.+)$/i))) lib.dependsOn.push(...splitCsvDirective(m[1]));
+      else if ((m = line.match(/^#B4XLibB4ADependsOn\s+(.+)$/i))) lib.b4aDependsOn.push(...splitCsvDirective(m[1]));
+      else if ((m = line.match(/^#B4XLibB4JDependsOn\s+(.+)$/i))) lib.b4jDependsOn.push(...splitCsvDirective(m[1]));
+      else if ((m = line.match(/^#B4XLibB4iDependsOn\s+(.+)$/i))) lib.b4iDependsOn.push(...splitCsvDirective(m[1]));
+      else if ((m = line.match(/^#B4XLibSupportedPlatforms\s+(.+)$/i))) lib.supportedPlatforms.push(...splitCsvDirective(m[1]));
+
+      // Legacy aliases. Kept as a fallback only.
+      else if ((m = line.match(/^#Version\s+(.+)$/i)) && (!lib.version || lib.version === '1.00')) lib.version = m[1].trim().replace(/^['"]|['"]$/g, '') || lib.version;
+      else if ((m = line.match(/^#Author\s+(.+)$/i)) && !lib.author) lib.author = m[1].trim().replace(/^['"]|['"]$/g, '');
       else if ((m = line.match(/^#DependsOn\s+(.+)$/i))) lib.dependsOn.push(...splitCsvDirective(m[1]));
       else if ((m = line.match(/^#B4ADependsOn\s+(.+)$/i))) lib.b4aDependsOn.push(...splitCsvDirective(m[1]));
       else if ((m = line.match(/^#B4JDependsOn\s+(.+)$/i))) lib.b4jDependsOn.push(...splitCsvDirective(m[1]));
@@ -986,6 +1733,92 @@ function crc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+function getClosureConsoleTemplate() {
+  return {
+    name: 'Closure Console sample',
+    files: {
+      'Demo.bx': `#Project B4J-NonUI B4XPPClosureConsole
+#Package b4xpp.examples.closures
+#ProjectDir b4x-ide-projects/B4XPPClosureConsole-b4j-nonui
+#MainModule Main
+
+#B4XLib B4XPPClosureConsole
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
+#B4XLibDir b4x-libs
+#B4XLibSupportedPlatforms B4J
+
+#Include "services/TaskRunner.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Log("=== B4X++ Closure Console Demo ===")
+    BasicGreeting
+    CapturedAdder
+    PassedClosure
+End Sub
+
+Private Sub BasicGreeting
+    Dim say As Closure = Sub(msg As String)
+        Log("Message: " & msg)
+    End Sub
+    say("anonymous Sub without capture")
+End Sub
+
+Private Sub CapturedAdder
+    Dim a As Int
+    a = 2
+    Dim add As Closure = Sub(i As Int) As Int
+        Return a + i
+    End Sub
+    Log("2 + 5 = " & add(5))
+    a = 10
+    Log("10 + 5 = " & add(5))
+End Sub
+
+Private Sub PassedClosure
+    Dim runner As TaskRunner
+    runner.Initialize
+    Dim factor As Int = 3
+    Dim multiply As Closure = Sub(value As Int) As Int
+        Return value * factor
+    End Sub
+    runner.Add("triple", multiply)
+    runner.RunAll(7)
+End Sub
+`,
+      'services/TaskRunner.bx': `#Class TaskRunner
+
+Sub Class_Globals
+    Private mNames As List
+    Private mActions As List
+End Sub
+
+#Constructor
+    mNames.Initialize
+    mActions.Initialize
+#End Constructor
+
+Public Sub Add(Name As String, Action As Closure)
+    mNames.Add(Name)
+    mActions.Add(Action)
+End Sub
+
+Public Sub RunAll(Value As Int)
+    For i = 0 To mActions.Size - 1
+        Dim action As Closure = mActions.Get(i)
+        Log(mNames.Get(i) & "(" & Value & ") = " & action(Value))
+    Next
+End Sub
+
+#End Class
+`
+    }
+  };
+}
+
 function getBasicAnimalTemplate() {
   return {
     name: 'Basic Animal OOP sample',
@@ -996,10 +1829,10 @@ function getBasicAnimalTemplate() {
 #MainModule Main
 
 #B4XLib AnimalComponents
-#Version 1.00
-#Author B4X++ Team
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4A, B4J, B4i
+#B4XLibSupportedPlatforms B4A, B4J, B4i
 
 #Include "contracts/IAnimal.bx"
 #Include "models/Animal.bx"
@@ -1128,14 +1961,15 @@ function getLanguageShowcaseTemplate() {
 #MainModule Main
 
 #B4XLib B4XPPShowcaseComponents
-#Version 1.00
-#Author B4X++ Team
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
 #B4XLibDir b4x-libs
-#SupportedPlatforms B4A, B4J, B4i
-#DependsOn XUI
-#B4JDependsOn jXUI
-#B4ADependsOn XUI
-#B4iDependsOn iXUI
+#B4XLibSupportedPlatforms B4A, B4J, B4i
+#ProjectB4JDependsOn jXUI
+#B4XLibDependsOn XUI
+#B4XLibB4JDependsOn jXUI
+#B4XLibB4ADependsOn XUI
+#B4XLibB4iDependsOn iXUI
 #LibraryFilesDir src-b4xpp/Files
 
 #Include "contracts/IRenderable.bx"
@@ -1278,7 +2112,7 @@ function getDungeonArenaTemplate() {
   return {
     name: 'OOP Dungeon Arena game sample',
     files: {
-      "Demo.bx": "#Project B4J-UI B4XPPBreakout\n#Package b4xpp.examples.breakout\n#ProjectDir b4x-ide-projects/B4XPPBreakout-b4j-ui\n#MainModule Main\n\n#B4XLib B4XPPBreakout\n#Version 1.00\n#Author B4X++ Team\n#B4XLibDir b4x-libs\n#SupportedPlatforms B4J\n#B4JDependsOn jXUI\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"core/BreakoutMath.bx\"\n#Include \"entities/GameEntity.bx\"\n#Include \"entities/Paddle.bx\"\n#Include \"entities/Ball.bx\"\n#Include \"entities/Brick.bx\"\n#Include \"services/BrickGrid.bx\"\n#Include \"services/ScoreBoard.bx\"\n#Include \"services/BreakoutGame.bx\"\n\nSub Process_Globals\n    Private fx As JFX\n    Private MainForm As Form\n    Private breakoutApp As BreakoutGame\n    Private gameClock As Timer\nEnd Sub\n\nSub AppStart (Form1 As Form, Args() As String)\n    MainForm = Form1\n    MainForm.Title = \"B4X++ XUI Breakout\"\n    MainForm.Resizable = False\n    MainForm.WindowWidth = 660dip\n    MainForm.WindowHeight = 540dip\n\n    Dim rootView As B4XView = MainForm.RootPane\n\n    breakoutApp.Initialize(rootView)\n    breakoutApp.StartPlay\n\n    gameClock.Initialize(\"GameClock\", 16)\n    gameClock.Enabled = True\n\n    MainForm.Show\nEnd Sub\n\nSub GameClock_Tick\n    breakoutApp.UpdateFrame\nEnd Sub\n",
+      "Demo.bx": "#Project B4J-NonUI B4XPPDungeonArena\n#Package b4xpp.examples.dungeonarena\n#ProjectDir b4x-ide-projects/B4XPPDungeonArena-b4j-nonui\n#MainModule Main\n\n#B4XLib B4XPPDungeonArena\n#B4XLibVersion 1.00\n#B4XLibAuthor B4X++ Team\n#B4XLibDir b4x-libs\n#B4XLibSupportedPlatforms B4A, B4J, B4i\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"contracts/IActor.bx\"\n#Include \"contracts/ICollectible.bx\"\n#Include \"core/ArenaMath.bx\"\n#Include \"core/GameObject.bx\"\n#Include \"actors/Actor.bx\"\n#Include \"actors/Hero.bx\"\n#Include \"actors/Enemy.bx\"\n#Include \"actors/Slime.bx\"\n#Include \"actors/Goblin.bx\"\n#Include \"actors/Boss.bx\"\n#Include \"items/Item.bx\"\n#Include \"items/HealthPotion.bx\"\n#Include \"items/DamageBoost.bx\"\n#Include \"services/GameWorld.bx\"\n\nSub Process_Globals\nEnd Sub\n\nSub AppStart (Args() As String)\n    Log(\"=== B4X++ OOP Dungeon Arena ===\")\n\n    Dim world As GameWorld\n    world.Initialize(8, 6)\n    world.StartDemo\nEnd Sub\n",
       "actors/Actor.bx": "#Class Actor Abstract Extends GameObject Implements IActor\n\n#Property Health As Int = 10\n#Property MaxHealth As Int = 10\n#Property AttackPower As Int = 1\n#Property Speed As Int = 1\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int)\n    Super.Initialize(Id, Name, X, Y)\n    setMaxHealth(MaxHealth)\n    setHealth(MaxHealth)\n    setAttackPower(AttackPower)\n    setSpeed(1)\n#End Constructor\n\nPublic Sub IsAlive As Boolean\n    Return getHealth > 0\nEnd Sub\n\nPublic Sub GetPosX As Int\n    Return getX\nEnd Sub\n\nPublic Sub SetPosX(Value As Int)\n    setX(Value)\nEnd Sub\n\nPublic Sub GetPosY As Int\n    Return getY\nEnd Sub\n\nPublic Sub SetPosY(Value As Int)\n    setY(Value)\nEnd Sub\n\nVirtual Sub Team As String\n    Return \"neutral\"\nEnd Sub\n\nVirtual Sub TakeTurn(World As Object)\nEnd Sub\n\nVirtual Sub ReceiveDamage(Amount As Int, Source As Object) As String\n    Dim beforeHealth As Int = getHealth\n    setHealth(getHealth - Amount)\n    Return getName & \" takes \" & (beforeHealth - getHealth) & \" damage. HP=\" & getHealth & \"/\" & getMaxHealth\nEnd Sub\n\nVirtual Sub Attack(Target As Object) As String\n    Dim targetActor As Poly IActor\n    targetActor = Target\n    Dim targetAlive As Boolean = targetActor.IsAlive\n    If targetAlive = False Then Return getName & \" has no living target.\"\n    Return getName & \" attacks. \" & targetActor.ReceiveDamage(getAttackPower, Me)\nEnd Sub\n\nProtected Sub MoveToward(Target As Object, World As GameWorld) As String\n    Dim targetActor As Poly IActor\n    targetActor = Target\n    Dim targetX As Int = targetActor.GetPosX\n    Dim targetY As Int = targetActor.GetPosY\n    Dim dx As Int = ArenaMath.Sign(targetX - getX)\n    Dim dy As Int = ArenaMath.Sign(targetY - getY)\n    If ArenaMath.AbsI(targetX - getX) >= ArenaMath.AbsI(targetY - getY) Then\n        dy = 0\n    Else\n        dx = 0\n    End If\n    World.MoveActor(Me, dx, dy)\n    Return getName & \" moves \" & ArenaMath.DirectionLabel(dx, dy) & \" to \" & FormatPosition\nEnd Sub\n\nOverride Sub Render As String\n    Return Super.Render & \" hp=\" & getHealth & \"/\" & getMaxHealth & \" atk=\" & getAttackPower\nEnd Sub\n\n#End Class\n",
       "actors/Boss.bx": "#Class Boss Extends Enemy Final\n\n#Property Rage As Int = 0\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int)\n    Super.Initialize(Id, Name, X, Y, 25, 7, 8)\n    setRage(0)\n#End Constructor\n\nOverride Sub ReceiveDamage(Amount As Int, Source As Object) As String\n    Dim line As String = Super.ReceiveDamage(Amount, Source)\n    setRage(getRage + 1)\n    setAttackPower(7 + getRage)\n    Return line & \" Rage=\" & getRage & \", ATK=\" & getAttackPower\nEnd Sub\n\nOverride Sub Attack(Target As Object) As String\n    Return \"[Boss] \" & Super.Attack(Target)\nEnd Sub\n\nOverride Sub WarCry As String\n    Return getName & \" roars. The arena trembles.\"\nEnd Sub\n\n#End Class\n",
       "actors/Enemy.bx": "#Class Enemy Abstract Extends Actor\n\n#Property AggroRange As Int = 3\n\n#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int, AggroRange As Int)\n    Super.Initialize(Id, Name, X, Y, MaxHealth, AttackPower)\n    setAggroRange(AggroRange)\n#End Constructor\n\nOverride Sub Team As String\n    Return \"enemy\"\nEnd Sub\n\nOverride Sub TakeTurn(World As Object)\n    Dim arenaWorld As GameWorld = World\n    Dim heroTarget As Object = arenaWorld.Hero\n    Dim heroActor As Poly IActor\n    heroActor = heroTarget\n    Dim heroIsAlive As Boolean = heroActor.IsAlive\n    If IsAlive = False Or heroIsAlive = False Then Return\n\n    Dim heroX As Int = heroActor.GetPosX\n    Dim heroY As Int = heroActor.GetPosY\n    Dim distanceToHero As Int = ArenaMath.Distance(getX, getY, heroX, heroY)\n    If distanceToHero <= 1 Then\n        Log(Attack(heroTarget))\n    Else If distanceToHero <= getAggroRange Then\n        Log(MoveToward(heroTarget, arenaWorld))\n    Else\n        Log(WarCry)\n    End If\nEnd Sub\n\nProtected Virtual Sub WarCry As String\n    Return getName & \" waits in the dark.\"\nEnd Sub\n\nOverride Sub Render As String\n    Return Super.Render & \" aggro=\" & getAggroRange\nEnd Sub\n\n#End Class\n",
@@ -1303,11 +2137,11 @@ function getBreakoutTemplate() {
   return {
     name: 'XUI Breakout game sample',
     files: {
-      "Demo.bx": "#Project B4J-UI B4XPPBreakout\n#Package b4xpp.examples.breakout\n#ProjectDir b4x-ide-projects/B4XPPBreakout-b4j-ui\n#MainModule Main\n\n#B4XLib B4XPPBreakout\n#Version 1.00\n#Author B4X++ Team\n#B4XLibDir b4x-libs\n#SupportedPlatforms B4J\n#B4JDependsOn jXUI\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"core/BreakoutMath.bx\"\n#Include \"entities/GameEntity.bx\"\n#Include \"entities/Paddle.bx\"\n#Include \"entities/Ball.bx\"\n#Include \"entities/Brick.bx\"\n#Include \"services/BrickGrid.bx\"\n#Include \"services/ScoreBoard.bx\"\n#Include \"services/BreakoutGame.bx\"\n\nSub Process_Globals\n    Private fx As JFX\n    Private MainForm As Form\n    Private breakoutApp As BreakoutGame\n    Private gameClock As Timer\nEnd Sub\n\nSub AppStart (Form1 As Form, Args() As String)\n    MainForm = Form1\n    MainForm.Title = \"B4X++ XUI Breakout\"\n    MainForm.Resizable = False\n    MainForm.WindowWidth = 660dip\n    MainForm.WindowHeight = 540dip\n\n    Dim rootView As B4XView = MainForm.RootPane\n\n    breakoutApp.Initialize(rootView)\n    breakoutApp.StartPlay\n\n    gameClock.Initialize(\"GameClock\", 16)\n    gameClock.Enabled = True\n\n    MainForm.Show\nEnd Sub\n\nSub GameClock_Tick\n    breakoutApp.UpdateFrame\nEnd Sub\n",
+      "Demo.bx": "#Project B4J-UI B4XPPBreakout\n#Package b4xpp.examples.breakout\n#ProjectDir b4x-ide-projects/B4XPPBreakout-b4j-ui\n#MainModule Main\n\n#B4XLib B4XPPBreakout\n#B4XLibVersion 1.00\n#B4XLibAuthor B4X++ Team\n#B4XLibDir b4x-libs\n#B4XLibSupportedPlatforms B4J\n#ProjectB4JDependsOn jXUI\n#B4XLibB4JDependsOn jXUI\n\n#Include \"contracts/IRenderable.bx\"\n#Include \"core/BreakoutMath.bx\"\n#Include \"entities/GameEntity.bx\"\n#Include \"entities/Paddle.bx\"\n#Include \"entities/Ball.bx\"\n#Include \"entities/Brick.bx\"\n#Include \"services/BrickGrid.bx\"\n#Include \"services/ScoreBoard.bx\"\n#Include \"services/BreakoutGame.bx\"\n\nSub Process_Globals\n    Private fx As JFX\n    Private MainForm As Form\n    Private breakoutApp As BreakoutGame\n    Private gameClock As Timer\nEnd Sub\n\nSub AppStart (Form1 As Form, Args() As String)\n    MainForm = Form1\n    MainForm.Title = \"B4X++ XUI Breakout\"\n    MainForm.Resizable = False\n    MainForm.WindowWidth = 660dip\n    MainForm.WindowHeight = 540dip\n\n    Dim rootView As B4XView = MainForm.RootPane\n\n    breakoutApp.Initialize(rootView)\n    breakoutApp.StartPlay\n\n    gameClock.Initialize(\"GameClock\", 16)\n    gameClock.Enabled = True\n\n    MainForm.Show\nEnd Sub\n\nSub GameClock_Tick\n    breakoutApp.UpdateFrame\nEnd Sub\n",
       "contracts/IRenderable.bx": "#Interface IRenderable\nSub Render(Cvs As B4XCanvas)\n#End Interface\n",
       "core/BreakoutMath.bx": "#StaticCode BreakoutMath\n\nSub Process_Globals\nEnd Sub\n\nPublic Sub ClampF(Value As Float, MinValue As Float, MaxValue As Float) As Float\n    If Value < MinValue Then Return MinValue\n    If Value > MaxValue Then Return MaxValue\n    Return Value\nEnd Sub\n\nPublic Sub AbsF(Value As Float) As Float\n    If Value < 0 Then Return -Value\n    Return Value\nEnd Sub\n\nPublic Sub Overlaps(LeftA As Float, TopA As Float, RightA As Float, BottomA As Float, LeftB As Float, TopB As Float, RightB As Float, BottomB As Float) As Boolean\n    If RightA < LeftB Then Return False\n    If LeftA > RightB Then Return False\n    If BottomA < TopB Then Return False\n    If TopA > BottomB Then Return False\n    Return True\nEnd Sub\n\nPublic Sub CenterOf(LeftValue As Float, SizeValue As Float) As Float\n    Return LeftValue + SizeValue / 2\nEnd Sub\n\n#End StaticCode\n",
       "entities/Ball.bx": "#Class Ball Extends GameEntity Final\n\n#Property VelocityX As Float = 190\n#Property VelocityY As Float = -230\n#Property Radius As Float = 7\n\n#Constructor(aX As Float, aY As Float, aRadius As Float, aColor As Int)\n    ' The ball is stored as a rectangle but rendered as a circle.\n    Super.Initialize(aX - aRadius, aY - aRadius, aRadius * 2, aRadius * 2, aColor)\n    Radius = aRadius\n    VelocityX = 190\n    VelocityY = -230\n#End Constructor\n\nPublic Sub ResetAt(aBallCenterX As Float, aBallCenterY As Float)\n    ' Places the ball above the paddle before launch / relaunch.\n    SetPosition(aBallCenterX - getRadius, aBallCenterY - getRadius)\n    VelocityX = 190\n    VelocityY = -230\nEnd Sub\n\nPublic Sub Advance(aDeltaSeconds As Float, aBoundsWidth As Float)\n    ' Moves the ball and bounces against the left, right and top walls.\n    SetPosition(getX + getVelocityX * aDeltaSeconds, getY + getVelocityY * aDeltaSeconds)\n\n    If Left <= 0 Then\n        SetPosition(0, getY)\n        BounceX\n    Else If Right >= aBoundsWidth Then\n        SetPosition(aBoundsWidth - getWidth, getY)\n        BounceX\n    End If\n\n    If Top <= 0 Then\n        SetPosition(getX, 0)\n        BounceY\n    End If\nEnd Sub\n\nPublic Sub BounceX\n    ' Reverses horizontal movement.\n    VelocityX = -getVelocityX\nEnd Sub\n\nPublic Sub BounceY\n    ' Reverses vertical movement.\n    VelocityY = -getVelocityY\nEnd Sub\n\nPublic Sub AimFromPaddle(aPlayerPaddle As Paddle)\n    ' Changes the exit angle depending on where the ball touched the paddle.\n    Dim offset As Float = (CenterX - aPlayerPaddle.CenterX) / Max(1, aPlayerPaddle.getWidth / 2)\n    offset = BreakoutMath.ClampF(offset, -1, 1)\n    VelocityX = 260 * offset\n    VelocityY = -BreakoutMath.AbsF(getVelocityY)\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws the ball as a filled circle.\n    If getVisible = False Then Return\n    aCvs.DrawCircle(CenterX, CenterY, getRadius, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
-      "entities/Brick.bx": "#Class Brick Extends GameEntity Final\n\n#Property Points As Int = 10\n#Property Broken As Boolean = False\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int, aPoints As Int)\n    ' Brick is an entity with a score value and a broken state.\n    Super.Initialize(aX, aY, aWidth, aHeight, aColor)\n    Points = aPoints\n    Broken = False\n#End Constructor\n\nPublic Sub Hit As Int\n    ' Breaks the brick once and returns the gained score.\n    If getBroken Then Return 0\n    Broken = True\n    Visible = False\n    Return getPoints\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws a brick with a thin white border.\n    If getBroken Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\n    aCvs.DrawRect(EntityRect, 0xFFFFFFFF, False, 1dip)\nEnd Sub\n\n#End Class\n",
+      "entities/Brick.bx": "#Class Brick Extends GameEntity Final\n\n#Property Points As Int = 10\n#Property Broken As Boolean = False\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int, aPoints As Int)\n    ' Brick is an entity with a score value and a broken state.\n    Super.Initialize(aX, aY, aWidth, aHeight, aColor)\n    Points = aPoints\n    Broken = False\n#End Constructor\n\nPublic Sub Hit As Int\n    ' Breaks the brick once and returns the gained score.\n    If Broken Then Return 0\n    Broken = True\n    Visible = False\n    Return Points\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws a brick with a thin white border.\n    If Broken Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\n    aCvs.DrawRect(EntityRect, 0xFFFFFFFF, False, 1dip)\nEnd Sub\n\n#End Class\n",
       "entities/GameEntity.bx": "#Class GameEntity Abstract Implements IRenderable\n\n#Property X As Float = 0\n#Property Y As Float = 0\n#Property Width As Float = 10\n#Property Height As Float = 10\n#Property Color As Int = 0\n#Property Visible As Boolean = True\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)\n    ' Shared entity setup: B4X++ property assignment calls the generated setters.\n    X = aX\n    Y = aY\n    Width = aWidth\n    Height = aHeight\n    Color = aColor\n    Visible = True\n#End Constructor\n\nPublic Sub Left As Float\n    ' Left edge of the entity rectangle.\n    Return getX\nEnd Sub\n\nPublic Sub Top As Float\n    ' Top edge of the entity rectangle.\n    Return getY\nEnd Sub\n\nPublic Sub Right As Float\n    ' Right edge of the entity rectangle.\n    Return getX + getWidth\nEnd Sub\n\nPublic Sub Bottom As Float\n    ' Bottom edge of the entity rectangle.\n    Return getY + getHeight\nEnd Sub\n\nPublic Sub CenterX As Float\n    ' Horizontal center used by the ball and paddle logic.\n    Return BreakoutMath.CenterOf(getX, getWidth)\nEnd Sub\n\nPublic Sub CenterY As Float\n    ' Vertical center used by the ball rendering.\n    Return BreakoutMath.CenterOf(getY, getHeight)\nEnd Sub\n\nPublic Sub SetPosition(aNewX As Float, aNewY As Float)\n    ' Moves the entity without changing its size.\n    X = aNewX\n    Y = aNewY\nEnd Sub\n\nPublic Sub CollidesWithBox(aOtherLeft As Float, aOtherTop As Float, aOtherRight As Float, aOtherBottom As Float) As Boolean\n    ' Rectangle collision helper. Safer than Intersects(GameEntity) after B4X++ flattening.\n    Return BreakoutMath.Overlaps(Left, Top, Right, Bottom, aOtherLeft, aOtherTop, aOtherRight, aOtherBottom)\nEnd Sub\n\nProtected Sub EntityRect As B4XRect\n    ' Reusable rectangle for B4XCanvas drawing.\n    Dim entityArea As B4XRect\n    entityArea.Initialize(Left, Top, Right, Bottom)\n    Return entityArea\nEnd Sub\n\nVirtual Sub Render(aCvs As B4XCanvas)\n    ' Default renderer for rectangular entities.\n    If getVisible = False Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
       "entities/Paddle.bx": "#Class Paddle Extends GameEntity Final\n\n#Property Speed As Float = 720\n\n#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)\n    ' Paddle is a specialized rectangle controlled by the mouse.\n    Super.Initialize(aX, aY, aWidth, aHeight, aColor)\n    Speed = 720\n#End Constructor\n\nPublic Sub MoveCenter(aTargetCenterX As Float, aBoundsWidth As Float)\n    ' Keeps the paddle centered under the mouse while staying inside the arena.\n    Dim newLeft As Float = aTargetCenterX - getWidth / 2\n    newLeft = BreakoutMath.ClampF(newLeft, 0, aBoundsWidth - getWidth)\n    SetPosition(newLeft, getY)\nEnd Sub\n\nPublic Sub Nudge(aDirection As Int, aDeltaSeconds As Float, aBoundsWidth As Float)\n    ' Optional keyboard-style movement helper.\n    MoveCenter(CenterX + aDirection * getSpeed * aDeltaSeconds, aBoundsWidth)\nEnd Sub\n\nOverride Sub Render(aCvs As B4XCanvas)\n    ' Draws the paddle.\n    If getVisible = False Then Return\n    aCvs.DrawRect(EntityRect, getColor, True, 0)\nEnd Sub\n\n#End Class\n",
       "services/BreakoutGame.bx": "#Class BreakoutGame Final\n\n#Property GameWidth As Float = 640\n#Property GameHeight As Float = 480\n\nSub Class_Globals\n    Private xui As XUI\n    Private mRoot As B4XView\n    Private mSurface As B4XView\n    Private mCanvas As B4XCanvas\n    Private mPaddle As Paddle\n    Private mBall As Ball\n    Private mGrid As BrickGrid\n    Private mHud As ScoreBoard\n    Private mLastTicks As Long\n    Private mReady As Boolean\nEnd Sub\n\nPublic Sub Initialize(aRoot As B4XView)\n    ' Creates the drawing surface and all game objects.\n    mRoot = aRoot\n    GameWidth = 640\n    GameHeight = 480\n\n    mSurface = xui.CreatePanel(\"GameSurface\")\n    mRoot.AddView(mSurface, 0, 0, getGameWidth, getGameHeight)\n    mCanvas.Initialize(mSurface)\n\n    mPaddle.Initialize(270dip, 420dip, 100dip, 14dip, xui.Color_RGB(250, 250, 250))\n    mBall.Initialize(320dip, 400dip, 7dip, xui.Color_RGB(255, 230, 120))\n    mGrid.Initialize(getGameWidth)\n    mHud.Initialize\n\n    mLastTicks = DateTime.Now\n    mReady = True\n    DrawFrame\nEnd Sub\n\nPublic Sub StartPlay\n    ' Starts or restarts the game after a click.\n    If mReady = False Then Return\n    If mHud.getLives <= 0 Or mGrid.getRemaining <= 0 Then ResetGame\n    mHud.setRunning(True)\n    mHud.setMessage(\"\")\n    mLastTicks = DateTime.Now\nEnd Sub\n\nPublic Sub ResetGame\n    ' Rebuilds bricks and resets the paddle / ball positions.\n    mHud.Initialize\n    mGrid.BuildLevel(getGameWidth)\n    mPaddle.MoveCenter(getGameWidth / 2, getGameWidth)\n    mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    DrawFrame\nEnd Sub\n\nPublic Sub UpdateFrame\n    ' Main frame update called by the B4J Timer.\n    If mReady = False Then Return\n    Dim nowTicks As Long = DateTime.Now\n    Dim deltaSeconds As Float = (nowTicks - mLastTicks) / 1000\n    mLastTicks = nowTicks\n    If deltaSeconds > 0.05 Then deltaSeconds = 0.05\n\n    If mHud.getRunning Then\n        mBall.Advance(deltaSeconds, getGameWidth)\n        CheckPaddleCollision\n        Dim points As Int = mGrid.CheckBallCollision(mBall)\n        If points > 0 Then mHud.AddScore(points)\n        If mGrid.getRemaining <= 0 Then mHud.WinGame\n        If mBall.Top > getGameHeight Then\n            Dim finished As Boolean = mHud.LoseLife\n            If finished = False Then mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n        End If\n    Else\n        mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    End If\n\n    DrawFrame\nEnd Sub\n\nPrivate Sub CheckPaddleCollision\n    ' Handles ball / paddle collision without typed parent casts.\n    If mBall.getVelocityY > 0 And mBall.CollidesWithBox(mPaddle.Left, mPaddle.Top, mPaddle.Right, mPaddle.Bottom) Then\n        mBall.SetPosition(mBall.getX, mPaddle.Top - mBall.getHeight - 1dip)\n        mBall.AimFromPaddle(mPaddle)\n    End If\nEnd Sub\n\nPublic Sub MovePaddle(aTargetX As Float)\n    ' Mouse movement entry point.\n    If mReady = False Then Return\n    mPaddle.MoveCenter(aTargetX, getGameWidth)\n    If mHud.getRunning = False Then mBall.ResetAt(mPaddle.CenterX, mPaddle.Top - 10dip)\n    DrawFrame\nEnd Sub\n\nPublic Sub DrawFrame\n    ' Clears the canvas and redraws the whole scene.\n    If mReady = False Then Return\n    mCanvas.ClearRect(mCanvas.TargetRect)\n    mCanvas.DrawRect(mCanvas.TargetRect, xui.Color_RGB(22, 28, 38), True, 0)\n    mGrid.RenderAll(mCanvas)\n    mPaddle.Render(mCanvas)\n    mBall.Render(mCanvas)\n    mHud.Render(mCanvas, getGameWidth)\n    mCanvas.Invalidate\nEnd Sub\n\nPrivate Sub GameSurface_MouseMoved(aEventData As MouseEvent)\n    ' B4J event: move the paddle with the mouse.\n    MovePaddle(aEventData.X)\nEnd Sub\n\nPrivate Sub GameSurface_MousePressed(aEventData As MouseEvent)\n    ' B4J event: click to launch or restart.\n    StartPlay\nEnd Sub\n\n#End Class\n",
@@ -1321,17 +2155,18 @@ function getExamplesReadme() {
   return [
     '# B4X++ Examples',
     '',
-    'This folder contains four ready-to-copy B4X++ examples:',
+    'This folder contains five ready-to-copy B4X++ examples:',
     '',
     '- `basic-animal`: a simple and familiar OOP example with `Animal`, `Dog`, `Cat` and `Bird`.',
     '- `language-showcase`: a broader sample that demonstrates most B4X++ directives and keywords.',
+    '- `closure-console`: a B4J Non-UI example showing `Closure` / anonymous `Sub`, captured local variables and passing closures to another class.',
     '- `oop-dungeon-arena`: a small turn-based game using heavier OOP patterns: interfaces, inheritance, abstract classes, overrides, `Super`, custom property accessors, `Poly` dispatch and a `#StaticCode` helper module.',
     '- `xui-breakout`: a B4J UI + XUI Breakout game using `B4XCanvas`, a `Timer`, mouse input, entities, services, collisions and rendering.',
     '',
     'Open one example folder in VS Code, then run:',
     '',
     '1. `B4X++: Sync #Project` to generate a B4J/B4A/B4i test project.',
-    '2. `B4X++: Generate .bas Files` to inspect the generated B4X modules.',
+    '2. `B4X++: Transpile Workspace` to inspect the generated B4X modules.',
     '3. `B4X++: Build .b4xlib` to package reusable B4X components.',
     ''
   ].join('\n');
@@ -1490,7 +2325,7 @@ function addB4XModuleDesignHeader(content, platform, kind, options = {}) {
   // .b4xlib modules are usually generated from B4J modules even when the library targets B4A and B4J.
   // This follows the structure used by XUI Views and keeps the Designer scanner happy.
   const platformFlag = options && options.forceB4JHeader ? 'B4J' : (platform === 'b4a' ? 'B4A' : platform === 'b4i' ? 'B4i' : 'B4J');
-  const type = kind === 'class' ? 'Class' : 'StaticCode';
+  const type = (kind === 'class' || kind === 'closure-runtime') ? 'Class' : 'StaticCode';
   const version = platformFlag === 'B4A' ? '12.0' : platformFlag === 'B4i' ? '8.0' : '10.0';
   const header = [
     `${platformFlag}=true`,
@@ -2045,9 +2880,10 @@ function buildB4XPPSymbolIndex(document) {
 
 function parseB4XPPSymbolFile(file, text) {
   const lines = normalizeNewlines(text).split('\n');
-  const info = { file, lines, classes: [], interfaces: [], methods: [] };
+  const info = { file, lines, classes: [], interfaces: [], methods: [], closures: [] };
   let currentOwner = null;
   let currentMethod = null;
+  const closureStack = [];
 
   function closeOwner(endLine) {
     if (currentOwner) currentOwner.endLine = endLine;
@@ -2074,7 +2910,19 @@ function parseB4XPPSymbolFile(file, text) {
       closeOwner(i);
       continue;
     }
+    const navClosure = currentMethod ? parseNavigationClosureLiteral(raw, i, file) : null;
+    if (navClosure) {
+      navClosure.ownerMethod = currentMethod.name;
+      closureStack.push(navClosure);
+      info.closures.push(navClosure);
+    }
+
     if (/^End\s+Sub\b/i.test(trimmed)) {
+      if (closureStack.length) {
+        const c = closureStack.pop();
+        c.endLine = i;
+        continue;
+      }
       closeMethod(i);
       continue;
     }
@@ -2339,6 +3187,13 @@ function collectVariablesForScope(index, fileInfo, line) {
   }
 
   const method = findMethodAtPosition(fileInfo, line);
+  const closure = findNavigationClosureAt(fileInfo, line);
+  if (closure) {
+    const declLine = fileInfo.lines[closure.startLine] || '';
+    for (const p of closure.params || []) {
+      variables.set(p.name.toLowerCase(), { name: p.name, file: fileInfo.file, line: closure.startLine, range: makeWordRange(declLine, closure.startLine, p.name, 0), type: p.type || '', polyType: null, assignedType: null });
+    }
+  }
   const start = method ? method.startLine : 0;
   const end = Math.min(line, fileInfo.lines.length - 1);
   for (let i = start; i <= end; i++) {
@@ -2406,6 +3261,35 @@ function makeWordRange(line, lineIndex, word, searchStart = 0) {
 
 function rangeEquals(a, b) {
   return !!a && !!b && a.start.line === b.start.line && a.start.character === b.start.character && a.end.line === b.end.line && a.end.character === b.end.character;
+}
+
+
+function parseNavigationClosureLiteral(raw, lineIndex, file) {
+  const code = splitCodeAndCommentForNavigation(raw).code;
+  const m = code.match(/^\s*(?:Dim|Private|Public|Protected)\s+([A-Za-z_][A-Za-z0-9_]*)\s+As\s+(?:Sub|Closure)\s*=\s*Sub\s*(?:\(([^)]*)\))?/i);
+  if (!m) return null;
+  return {
+    kind: 'closure',
+    name: m[1],
+    file,
+    line: lineIndex,
+    startLine: lineIndex,
+    endLine: lineIndex,
+    range: makeWordRange(raw, lineIndex, m[1], 0),
+    params: v3ParseParams(m[2] || ''),
+    paramsRaw: m[2] || ''
+  };
+}
+
+function findNavigationClosureAt(info, line) {
+  if (!info || !info.closures) return null;
+  let best = null;
+  for (const closure of info.closures) {
+    if (line >= closure.startLine && line <= closure.endLine) {
+      if (!best || closure.startLine >= best.startLine) best = closure;
+    }
+  }
+  return best;
 }
 
 function splitCodeAndCommentForNavigation(line) {
@@ -2716,6 +3600,9 @@ let b4xppV3IndexCache = null;
 let b4xppV3IndexCacheKey = '';
 
 async function refreshIntelliSenseCommand() {
+  if (typeof clearB4XLibraryIndexCache === 'function') clearB4XLibraryIndexCache();
+  b4xppV315ExternalTypeCache = null;
+  b4xppV315ExternalTypeCacheKey = '';
   const editor = vscode.window.activeTextEditor;
   const folder = getWorkspaceFolder();
   if (!folder) {
@@ -2754,6 +3641,314 @@ function mergeV3SemanticDiagnostics(baseDiagnosticsByUri, document, root, config
   return merged;
 }
 
+
+
+//────────────────────────────────────────────────────────────
+// B4X++ v0.4.0 external library type index for completion / hover
+//────────────────────────────────────────────────────────────
+let b4xppV315ExternalTypeCacheKey = '';
+let b4xppV315ExternalTypeCache = null;
+
+function v315DirectiveStateForDocument(document, root, config) {
+  const folder = { uri: { fsPath: root } };
+  let base = defaultProjectDirectiveState();
+  try { base = readMainBxProjectDirectives(folder, config || getConfig()); } catch {}
+  if (document && document.languageId === 'b4xpp') {
+    const text = document.getText();
+    const docState = v315ReadDirectiveStateFromText(text);
+    if (v315DirectiveStateHasProjectData(docState)) {
+      docState.mainBxPath = path.relative(root, document.uri.fsPath).replace(/\\/g, '/');
+      return docState;
+    }
+  }
+  return base;
+}
+
+function v315ReadDirectiveStateFromText(text) {
+  const directives = defaultProjectDirectiveState();
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    let m;
+    if ((m = line.match(/^#Project\s+(\S+)(?:\s+(.+))?$/i))) { directives.projectPlatform = m[1].trim(); directives.projectName = (m[2] || '').trim(); }
+    else if ((m = line.match(/^#Package\s+(.+)$/i))) directives.packageName = m[1].trim();
+    else if ((m = line.match(/^#ProjectDir\s+(.+)$/i))) directives.projectDir = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#MainModule\s+(.+)$/i))) directives.mainModule = m[1].trim();
+    else if ((m = line.match(/^#ProjectDependsOn\s+(.+)$/i))) directives.projectDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4JDependsOn\s+(.+)$/i))) directives.projectB4JDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4ADependsOn\s+(.+)$/i))) directives.projectB4ADependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#ProjectB4iDependsOn\s+(.+)$/i))) directives.projectB4iDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLib\s+(.+)$/i))) directives.b4xLib = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibVersion\s+(.+)$/i))) directives.b4xLibVersion = m[1].trim();
+    else if ((m = line.match(/^#B4XLibAuthor\s+(.+)$/i))) directives.b4xLibAuthor = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibDir\s+(.+)$/i))) directives.b4xLibDir = unquoteDirectiveValue(m[1]);
+    else if ((m = line.match(/^#B4XLibSupportedPlatforms\s+(.+)$/i))) directives.b4xLibSupportedPlatforms = splitDirectiveList(m[1]);
+    else if ((m = line.match(/^#B4XLibDependsOn\s+(.+)$/i))) directives.b4xLibDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4JDependsOn\s+(.+)$/i))) directives.b4xLibB4JDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4ADependsOn\s+(.+)$/i))) directives.b4xLibB4ADependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#B4XLibB4iDependsOn\s+(.+)$/i))) directives.b4xLibB4iDependsOn.push(...splitDirectiveList(m[1]));
+    else if ((m = line.match(/^#DependsOn\s+(.+)$/i))) { directives.dependsOn.push(...splitDirectiveList(m[1])); directives.projectDependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4JDependsOn\s+(.+)$/i))) { directives.b4jDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4JDependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4ADependsOn\s+(.+)$/i))) { directives.b4aDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4ADependsOn.push(...splitDirectiveList(m[1])); }
+    else if ((m = line.match(/^#B4iDependsOn\s+(.+)$/i))) { directives.b4iDependsOn.push(...splitDirectiveList(m[1])); directives.projectB4iDependsOn.push(...splitDirectiveList(m[1])); }
+  }
+  for (const key of ['projectDependsOn','projectB4JDependsOn','projectB4ADependsOn','projectB4iDependsOn','b4xLibDependsOn','b4xLibB4JDependsOn','b4xLibB4ADependsOn','b4xLibB4iDependsOn','dependsOn','b4jDependsOn','b4aDependsOn','b4iDependsOn']) directives[key] = uniqueStrings(directives[key]);
+  directives.b4xLibSupportedPlatforms = uniqueStrings((directives.b4xLibSupportedPlatforms || []).map(normalizePlatformLabel).filter(Boolean));
+  return directives;
+}
+
+function v315DirectiveStateHasProjectData(d) {
+  return !!(d && (d.projectPlatform || d.projectName || d.b4xLib || d.projectDependsOn.length || d.projectB4JDependsOn.length || d.projectB4ADependsOn.length || d.projectB4iDependsOn.length || d.b4xLibDependsOn.length || d.b4xLibB4JDependsOn.length || d.b4xLibB4ADependsOn.length || d.b4xLibB4iDependsOn.length));
+}
+
+function v315DependencyMode(d) {
+  const hasProject = !!(d && (d.projectPlatform || d.projectName || (d.projectDependsOn || []).length || (d.projectB4JDependsOn || []).length || (d.projectB4ADependsOn || []).length || (d.projectB4iDependsOn || []).length));
+  return hasProject ? 'project' : 'b4xlib';
+}
+
+function v315FallbackPlatform(config) {
+  const p = String((config && config.platform) || 'auto').toLowerCase();
+  if (p.includes('b4a')) return 'b4a';
+  if (p.includes('b4i')) return 'b4i';
+  return 'b4j';
+}
+
+function v315PlatformFromProjectDirective(value) {
+  const v = String(value || '').toLowerCase();
+  if (v.includes('b4a')) return 'b4a';
+  if (v.includes('b4i')) return 'b4i';
+  if (v.includes('b4j')) return 'b4j';
+  return '';
+}
+
+function v315ActivePlatformsForExternalTypes(d, config) {
+  const mode = v315DependencyMode(d);
+  if (mode === 'project') {
+    const direct = v315PlatformFromProjectDirective(d.projectPlatform);
+    if (direct) return [direct];
+    const out = [];
+    if ((d.projectB4JDependsOn || []).length) out.push('b4j');
+    if ((d.projectB4ADependsOn || []).length) out.push('b4a');
+    if ((d.projectB4iDependsOn || []).length) out.push('b4i');
+    return out.length ? uniqueStrings(out) : [v315FallbackPlatform(config)];
+  }
+  const supported = (d.b4xLibSupportedPlatforms || []).map(v => normalizePlatformLabel(v).toLowerCase()).filter(Boolean);
+  if (supported.length) return uniqueStrings(supported);
+  const out = [];
+  if ((d.b4xLibB4JDependsOn || []).length) out.push('b4j');
+  if ((d.b4xLibB4ADependsOn || []).length) out.push('b4a');
+  if ((d.b4xLibB4iDependsOn || []).length) out.push('b4i');
+  return out.length ? uniqueStrings(out) : [v315FallbackPlatform(config)];
+}
+
+function v315DependencyNamesForExternalTypes(d, platforms) {
+  const mode = v315DependencyMode(d);
+  const deps = [];
+  if (mode === 'project') {
+    deps.push(...(d.projectDependsOn || []));
+    if (platforms.includes('b4j')) deps.push(...(d.projectB4JDependsOn || []));
+    if (platforms.includes('b4a')) deps.push(...(d.projectB4ADependsOn || []));
+    if (platforms.includes('b4i')) deps.push(...(d.projectB4iDependsOn || []));
+  } else {
+    deps.push(...(d.b4xLibDependsOn || []));
+    if (platforms.includes('b4j')) deps.push(...(d.b4xLibB4JDependsOn || []));
+    if (platforms.includes('b4a')) deps.push(...(d.b4xLibB4ADependsOn || []));
+    if (platforms.includes('b4i')) deps.push(...(d.b4xLibB4iDependsOn || []));
+  }
+  return uniqueStrings(deps).map(v => String(v).trim()).filter(Boolean);
+}
+
+function v315LibraryDirsForPlatforms(config, platforms) {
+  const dirs = [];
+  if (platforms.includes('b4j')) dirs.push(...(config.b4jInternalLibraryDirs || []), ...(config.b4jAdditionalLibraryDirs || []));
+  if (platforms.includes('b4a')) dirs.push(...(config.b4aInternalLibraryDirs || []), ...(config.b4aAdditionalLibraryDirs || []));
+  if (platforms.includes('b4i')) dirs.push(...(config.b4iInternalLibraryDirs || []), ...(config.b4iAdditionalLibraryDirs || []));
+  return uniqueStrings(normalizeDirectoryList(dirs));
+}
+
+function v315ExternalLibraryTypesForDocument(document) {
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri) || getWorkspaceFolder();
+  const root = folder ? folder.uri.fsPath : path.dirname(document.uri.fsPath);
+  return v315ExternalLibraryTypesForRoot(root, getConfig(), document);
+}
+
+function v315ExternalLibraryTypesForRoot(root, config, activeDocument) {
+  const d = v315DirectiveStateForDocument(activeDocument, root, config);
+  const platforms = v315ActivePlatformsForExternalTypes(d, config);
+  const deps = v315DependencyNamesForExternalTypes(d, platforms);
+  const dirs = v315LibraryDirsForPlatforms(config, platforms);
+  const key = [root, platforms.slice().sort().join('+'), deps.map(x => x.toLowerCase()).sort().join(','), v315ExternalDirSignature(dirs)].join('::');
+  if (b4xppV315ExternalTypeCache && b4xppV315ExternalTypeCacheKey === key) return b4xppV315ExternalTypeCache;
+  const depSet = new Set(deps.map(x => String(x).toLowerCase()));
+  const hasExplicitDeps = depSet.size > 0;
+  const types = new Map();
+  const libraries = new Map();
+  for (const dir of dirs) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const file of entries) {
+      if (!/\.(xml|b4xlib)$/i.test(file)) continue;
+      const full = path.join(dir, file);
+      let lib = null;
+      try { lib = /\.xml$/i.test(file) ? parseB4XLibraryXml(full) : parseB4XLibFile(full); } catch { continue; }
+      if (!lib || !lib.name) continue;
+      const libKeys = new Set([lib.name, path.basename(full, path.extname(full))].map(x => String(x || '').toLowerCase()));
+      if (hasExplicitDeps && !Array.from(libKeys).some(k => depSet.has(k))) continue;
+      libraries.set(String(lib.name).toLowerCase(), { ...lib, path: full });
+      for (const cls of lib.classes || []) v315AddExternalType(types, cls, lib, full);
+      for (const typ of lib.types || []) v315AddExternalType(types, typ, lib, full);
+    }
+  }
+  const out = { types, libraries, platforms, deps, mode: v315DependencyMode(d) };
+  b4xppV315ExternalTypeCacheKey = key;
+  b4xppV315ExternalTypeCache = out;
+  return out;
+}
+
+function v315ExternalDirSignature(dirs) {
+  const parts = [];
+  for (const dir of dirs || []) {
+    let entries = [];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const file of entries) {
+      if (!/\.(xml|b4xlib)$/i.test(file)) continue;
+      const full = path.join(dir, file);
+      try { const st = fs.statSync(full); parts.push(`${full}:${st.mtimeMs}:${st.size}`); } catch {}
+    }
+  }
+  return parts.sort().join('|');
+}
+
+function v315AddExternalType(types, rawType, lib, libraryPath) {
+  const name = rawType.shortName || rawType.name;
+  if (!name) return;
+  const methods = (rawType.methods || []).map(m => ({
+    ...m,
+    kind: 'method',
+    visibility: m.visibility || 'public',
+    params: (m.params || []).map((p, i) => ({ name: p.name || `Arg${i + 1}`, type: p.type || 'Object' })),
+    paramsRaw: (m.paramsRaw || (m.params || []).map((p, i) => `${p.name || 'Arg' + (i + 1)} As ${p.type || 'Object'}`).join(', ')),
+    ownerName: name,
+    libraryName: lib.name,
+    libraryPath
+  }));
+  const properties = (rawType.properties || []).map(p => ({ ...p, kind: 'property', visibility: p.visibility || 'public', ownerName: name, libraryName: lib.name, libraryPath }));
+  const item = {
+    ...rawType,
+    name,
+    shortName: name,
+    kind: rawType.kind || 'Class',
+    libraryName: lib.name,
+    libraryPath,
+    source: rawType.source || libraryPath,
+    methods,
+    properties,
+    fullName: rawType.fullName || name
+  };
+  for (const key of [name, rawType.name, rawType.shortName, rawType.fullName].filter(Boolean)) types.set(String(key).toLowerCase(), item);
+}
+
+function v315ExternalTypeCompletions(document) {
+  const ext = v315ExternalLibraryTypesForDocument(document);
+  const out = [];
+  for (const t of ext.types.values()) {
+    if (String(t.name || '').includes('.')) continue;
+    const item = new vscode.CompletionItem(t.name, vscode.CompletionItemKind.Class);
+    item.detail = `${t.name} - external ${t.kind || 'type'} from ${t.libraryName}`;
+    item.documentation = new vscode.MarkdownString(`Source: \`${t.libraryPath || t.source || ''}\``);
+    item.sortText = '6_' + String(t.name).toLowerCase();
+    out.push(item);
+  }
+  return v33UniqueCompletions(out);
+}
+
+function v315FindExternalType(document, name) {
+  if (!document || !name) return null;
+  const ext = v315ExternalLibraryTypesForDocument(document);
+  return ext.types.get(String(name).toLowerCase()) || null;
+}
+
+function v315ExternalTypeHoverMarkdown(t) {
+  const methods = (t.methods || []).slice(0, 8).map(m => `- ${m.name}(${(m.params || []).map(p => `${p.name} As ${p.type || 'Object'}`).join(', ')})${m.returnType ? ' As ' + m.returnType : ''}`).join('\n');
+  const props = (t.properties || []).slice(0, 8).map(p => `- ${p.name} As ${p.type || 'Object'}`).join('\n');
+  return [
+    `**External type ${t.name}**`,
+    '',
+    `Library: **${t.libraryName || ''}**`,
+    t.kind ? `Kind: ${t.kind}` : '',
+    t.fullName && t.fullName !== t.name ? `Full name: \`${t.fullName}\`` : '',
+    t.source ? `Source module: \`${t.source}\`` : '',
+    t.libraryPath ? `Library file: \`${t.libraryPath}\`` : '',
+    methods ? `\n**Public methods**\n${methods}` : '',
+    props ? `\n**Public properties / fields**\n${props}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+function v315ExternalMemberCompletions(externalType) {
+  if (!externalType) return [];
+  const out = [];
+  const seen = new Set();
+  for (const p of externalType.properties || []) {
+    const key = 'p:' + String(p.name).toLowerCase(); if (seen.has(key)) continue; seen.add(key);
+    const item = new vscode.CompletionItem(p.name, vscode.CompletionItemKind.Property);
+    item.detail = `${externalType.name}.${p.name} As ${p.type || 'Object'} (${externalType.libraryName})`;
+    out.push(item);
+  }
+  for (const m of externalType.methods || []) {
+    const key = 'm:' + String(m.name).toLowerCase() + '#' + (m.params || []).length; if (seen.has(key)) continue; seen.add(key);
+    const item = methodCompletionItem(m, `${externalType.libraryName}.${externalType.name}`);
+    item.detail = `${externalType.name}.${v3MethodDetail(m)} (${externalType.libraryName})`;
+    out.push(item);
+  }
+  return out;
+}
+
+function v313LibraryDirectiveCompletionContext(rawPrefix, document, position) {
+  const match = String(rawPrefix || '').match(/^\s*#(ProjectDependsOn|ProjectB4JDependsOn|ProjectB4ADependsOn|ProjectB4iDependsOn|B4XLibDependsOn|B4XLibB4JDependsOn|B4XLibB4ADependsOn|B4XLibB4iDependsOn|B4JDependsOn|B4ADependsOn|B4iDependsOn|DependsOn)\s+(.+)?$/i);
+  if (!match) return null;
+  const directive = match[1];
+  const tail = match[2] || '';
+  const tokenMatch = tail.match(/([^,;\s]*)$/);
+  const currentToken = tokenMatch ? tokenMatch[1] : '';
+  const lower = directive.toLowerCase();
+  let platform = 'active';
+  let targetKey = 'projectDependsOn';
+  if (lower.includes('b4jdependson')) { platform = 'b4j'; targetKey = lower.startsWith('b4xlib') ? 'b4xLibB4JDependsOn' : 'projectB4JDependsOn'; }
+  else if (lower.includes('b4adependson')) { platform = 'b4a'; targetKey = lower.startsWith('b4xlib') ? 'b4xLibB4ADependsOn' : 'projectB4ADependsOn'; }
+  else if (lower.includes('b4idependson')) { platform = 'b4i'; targetKey = lower.startsWith('b4xlib') ? 'b4xLibB4iDependsOn' : 'projectB4iDependsOn'; }
+  else if (lower.startsWith('b4xlib')) { platform = 'active'; targetKey = 'b4xLibDependsOn'; }
+  const used = splitDirectiveList(tail).map(v => v.toLowerCase());
+  return {
+    directive,
+    platform,
+    targetKey,
+    currentToken,
+    used,
+    range: new vscode.Range(position.line, Math.max(0, position.character - currentToken.length), position.line, position.character)
+  };
+}
+
+function v313LibraryDirectiveCompletions(document, context) {
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri) || getWorkspaceFolder();
+  if (!folder) return [];
+  let state = null;
+  try { state = getProjectSettingsState(folder); } catch { state = null; }
+  if (!state) return [];
+  const libraries = state.availableLibraries || listAvailableLibrariesForProject(folder, state, state.directives || {});
+  const items = context.platform === 'active' ? (libraries.active || []) : (libraries[context.platform] || []);
+  const used = new Set((context.used || []).map(v => String(v).toLowerCase()));
+  return (items || [])
+    .filter(lib => lib && lib.name && !used.has(String(lib.name).toLowerCase()))
+    .map(lib => {
+      const item = new vscode.CompletionItem(lib.name, vscode.CompletionItemKind.Module);
+      item.detail = `${lib.kind || 'B4X library'} library`;
+      item.documentation = new vscode.MarkdownString(`Add \`${lib.name}\` to \`#${context.directive}\`.\n\n${lib.path ? '`' + lib.path + '`' : ''}`);
+      item.insertText = lib.name;
+      item.range = context.range;
+      item.sortText = '0_' + lib.name.toLowerCase();
+      return item;
+    });
+}
+
 class B4XPPV3IntelliSenseProvider {
   provideCompletionItems(document, position) {
     const index = buildV3Index(document);
@@ -2764,6 +3959,9 @@ class B4XPPV3IntelliSenseProvider {
     const currentClass = v3FindClassAt(index, fileInfo, position.line);
 
     if (v33IsInsideString(rawPrefix)) return [];
+
+    const libraryDirectiveContext = v313LibraryDirectiveCompletionContext(rawPrefix, document, position);
+    if (libraryDirectiveContext) return v313LibraryDirectiveCompletions(document, libraryDirectiveContext);
 
     const overrideMatch = prefix.match(/^\s*((?:Public|Private|Protected)\s+)?Override\s*$/i);
     if (overrideMatch && currentClass) return v3OverrideCompletions(index, currentClass);
@@ -2780,15 +3978,15 @@ class B4XPPV3IntelliSenseProvider {
     if (receiverMatch) {
       const receiver = receiverMatch[1];
       const resolved = v3ResolveReceiverType(index, fileInfo, position.line, receiver);
-      if (resolved) return v3MemberCompletions(index, resolved.type, { currentClass: currentClass && currentClass.name, includeProtected: false, includePrivate: false, staticOnly: resolved.staticOnly });
+      if (resolved) return v3MemberCompletions(index, resolved.type, { currentClass: currentClass && currentClass.name, includeProtected: false, includePrivate: false, staticOnly: resolved.staticOnly, externalTypes: index.externalTypes });
       const builtIn = v3BuiltinMembers(receiver, null);
       if (builtIn.length) return builtIn;
       return [];
     }
 
     const ctx = v33CompletionContext(prefix);
-    if (ctx === 'directive') return v33DirectiveCompletions();
-    if (ctx === 'type') return v3TypeCompletions(index);
+    if (ctx === 'directive') return v33DirectiveCompletions(rawPrefix, position);
+    if (ctx === 'type') return v3TypeCompletions(index, document);
     if (ctx === 'declaration') return v33DeclarationCompletions(index, currentClass);
     if (ctx === 'member-keyword') return v33MemberDeclarationCompletions();
 
@@ -2805,7 +4003,19 @@ class B4XPPV3IntelliSenseProvider {
   provideHover(document, position) {
     const index = buildV3Index(document);
     const resolved = v3ResolveSymbolAt(index, document, position);
-    if (!resolved) return null;
+    if (!resolved) {
+      const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+      if (!wordRange) return null;
+      const word = document.getText(wordRange);
+      const externalType = (index.externalTypes && index.externalTypes.get(word.toLowerCase())) || v315FindExternalType(document, word);
+      if (!externalType) return null;
+      const line = document.lineAt(position.line).text;
+      if (!looksLikeTypeReference(line, wordRange, word) && !/[A-Za-z_][A-Za-z0-9_]*\s*\.\s*$/.test(line.slice(0, wordRange.end.character))) return null;
+      const md = new vscode.MarkdownString(undefined, true);
+      md.isTrusted = false;
+      md.appendMarkdown(v315ExternalTypeHoverMarkdown(externalType));
+      return new vscode.Hover(md, wordRange);
+    }
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = false;
     md.appendMarkdown(v3SymbolMarkdown(resolved));
@@ -2909,7 +4119,8 @@ function buildV3IndexForRoot(root, config, activeDocument) {
   const sourceRoot = path.join(root, (config && config.sourceDir) || 'src-b4xpp');
   const files = fs.existsSync(sourceRoot) ? collectBxFiles(sourceRoot) : [];
   if (activeDocument && activeDocument.languageId === 'b4xpp' && !files.some(f => samePath(f, activeDocument.uri.fsPath))) files.push(activeDocument.uri.fsPath);
-  const key = [root, files.map(f => `${f}:${safeMTime(f)}`).join('|'), activeDocument ? activeDocument.uri.fsPath + ':' + activeDocument.version : ''].join('::');
+  const v315ConfigSig = [config && config.platform, ...(config && config.b4jInternalLibraryDirs || []), ...(config && config.b4jAdditionalLibraryDirs || []), ...(config && config.b4aInternalLibraryDirs || []), ...(config && config.b4aAdditionalLibraryDirs || []), ...(config && config.b4iInternalLibraryDirs || []), ...(config && config.b4iAdditionalLibraryDirs || [])].join('|');
+  const key = [root, v315ConfigSig, files.map(f => `${f}:${safeMTime(f)}`).join('|'), activeDocument ? activeDocument.uri.fsPath + ':' + activeDocument.version : ''].join('::');
   if (b4xppV3IndexCache && b4xppV3IndexCacheKey === key) return b4xppV3IndexCache;
 
   const index = {
@@ -2920,7 +4131,9 @@ function buildV3IndexForRoot(root, config, activeDocument) {
     interfaces: new Map(),
     staticCodes: new Map(),
     fileInfos: new Map(),
-    duplicates: []
+    duplicates: [],
+    externalTypes: new Map(),
+    externalLibraries: new Map()
   };
   for (const file of files) {
     try {
@@ -2932,6 +4145,11 @@ function buildV3IndexForRoot(root, config, activeDocument) {
       for (const mod of info.staticCodes) v3AddNamed(index.staticCodes, mod, index.duplicates);
     } catch (err) {}
   }
+  try {
+    const ext = v315ExternalLibraryTypesForRoot(root, config || getConfig(), activeDocument);
+    index.externalTypes = ext.types || new Map();
+    index.externalLibraries = ext.libraries || new Map();
+  } catch {}
   b4xppV3IndexCache = index;
   b4xppV3IndexCacheKey = key;
   return index;
@@ -2949,10 +4167,11 @@ function safeMTime(file) {
 
 function v3ParseFile(file, text) {
   const lines = normalizeNewlines(text).split('\n');
-  const info = { file, lines, includes: [], classes: [], interfaces: [], staticCodes: [], methods: [] };
+  const info = { file, lines, includes: [], classes: [], interfaces: [], staticCodes: [], methods: [], closures: [] };
   let owner = null;
   let method = null;
   let inGlobals = false;
+  const closureStack = [];
 
   const closeMethod = (endLine) => { if (method) method.endLine = Math.max(method.startLine, endLine); method = null; inGlobals = false; };
   const closeOwner = (endLine) => { if (owner) { owner.endLine = Math.max(owner.startLine, endLine); owner.fullRange = new vscode.Range(owner.startLine, 0, owner.endLine, 200); } owner = null; };
@@ -2965,7 +4184,25 @@ function v3ParseFile(file, text) {
     if (inc) info.includes.push({ value: inc[1] || inc[2] || inc[3], file, line: i, range: makeWordRange(raw, i, inc[1] || inc[2] || inc[3], 0) });
 
     if (/^#End\s+(Class|Interface|StaticCode)\b/i.test(trimmed)) { closeMethod(i); closeOwner(i); continue; }
-    if (/^End\s+Sub\b/i.test(trimmed) || /^End\s+(Get|Set)\b/i.test(trimmed)) { closeMethod(i); continue; }
+
+    const navClosure = method ? parseNavigationClosureLiteral(raw, i, file) : null;
+    if (navClosure) {
+      navClosure.ownerMethod = method.name;
+      navClosure.ownerName = owner ? owner.name : path.basename(file, '.bx');
+      closureStack.push(navClosure);
+      info.closures.push(navClosure);
+    }
+
+    if (/^End\s+Sub\b/i.test(trimmed)) {
+      if (closureStack.length) {
+        const c = closureStack.pop();
+        c.endLine = i;
+        continue;
+      }
+      closeMethod(i);
+      continue;
+    }
+    if (/^End\s+(Get|Set)\b/i.test(trimmed)) { closeMethod(i); continue; }
 
     const staticMatch = trimmed.match(/^#StaticCode\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (staticMatch) { closeMethod(i - 1); closeOwner(i - 1); owner = v3MakeOwner('staticCode', staticMatch[1], raw, i, file); info.staticCodes.push(owner); continue; }
@@ -3185,7 +4422,7 @@ function collectV3SemanticDiagnostics(index) {
 function v3IsKnownType(index, typeName) {
   const t = String(typeName || '').replace(/\(\)$/, '');
   if (!t || B4X_V3_TYPES.has(t.toLowerCase())) return true;
-  return index.classes.has(t.toLowerCase()) || index.interfaces.has(t.toLowerCase()) || index.staticCodes.has(t.toLowerCase());
+  return index.classes.has(t.toLowerCase()) || index.interfaces.has(t.toLowerCase()) || index.staticCodes.has(t.toLowerCase()) || (index.externalTypes && index.externalTypes.has(t.toLowerCase()));
 }
 
 function v3SameSignature(a, b) {
@@ -3308,8 +4545,8 @@ function v33CompletionContext(prefix) {
   return 'statement';
 }
 
-function v33DirectiveCompletions() {
-  return [
+function v33DirectiveCompletions(rawPrefix, position) {
+  const directiveRows = [
     ['#Class', 'Start a B4X++ class'],
     ['#End Class', 'End the current B4X++ class'],
     ['#Interface', 'Start a B4X++ interface'],
@@ -3321,12 +4558,41 @@ function v33DirectiveCompletions() {
     ['#Property', 'Generate field + getter/setter'],
     ['#Constructor', 'Declare a B4X++ constructor'],
     ['#Include', 'Include another .bx file'],
+    ['#Project', 'Generate a native .b4j/.b4a/.b4i project file'],
+    ['#Package', 'Native B4X project package / application id'],
+    ['#ProjectDir', 'Native B4X project output folder'],
     ['#MainModule', 'Declare the generated main module'],
-    ['#B4XLib', 'Declare B4XLib metadata'],
-    ['#Version', 'Declare library version'],
-    ['#Author', 'Declare library author'],
-    ['#SupportedPlatforms', 'Declare supported B4X platforms']
-  ].map(([label, detail]) => v3Completion(label, vscode.CompletionItemKind.Keyword, detail));
+    ['#ProjectDependsOn', 'Native IDE project library dependency emitted as LibraryN=...'],
+    ['#ProjectB4JDependsOn', 'B4J project library dependency emitted as LibraryN=...'],
+    ['#ProjectB4ADependsOn', 'B4A project library dependency emitted as LibraryN=...'],
+    ['#ProjectB4iDependsOn', 'B4i project library dependency emitted as LibraryN=...'],
+    ['#B4XLib', 'Declare B4XLib output name'],
+    ['#B4XLibVersion', 'B4XLib manifest version'],
+    ['#B4XLibAuthor', 'B4XLib manifest author'],
+    ['#B4XLibDir', 'B4XLib output folder'],
+    ['#B4XLibSupportedPlatforms', 'Optional B4X++ B4XLib platform metadata'],
+    ['#B4XLibDependsOn', 'Common B4XLib manifest dependency'],
+    ['#B4XLibB4JDependsOn', 'B4J-only B4XLib manifest dependency'],
+    ['#B4XLibB4ADependsOn', 'B4A-only B4XLib manifest dependency'],
+    ['#B4XLibB4iDependsOn', 'B4i-only B4XLib manifest dependency']
+  ];
+  const replaceRange = v315DirectiveCompletionRange(rawPrefix, position);
+  return directiveRows.map(([label, detail]) => {
+    const item = v3Completion(label, vscode.CompletionItemKind.Keyword, detail);
+    if (replaceRange) item.range = replaceRange;
+    item.insertText = label;
+    item.filterText = label;
+    item.sortText = '0_' + label.toLowerCase();
+    return item;
+  });
+}
+
+function v315DirectiveCompletionRange(rawPrefix, position) {
+  if (!position) return null;
+  const prefix = String(rawPrefix || '');
+  const m = prefix.match(/#(?:[A-Za-z0-9_]*)$/);
+  if (!m) return null;
+  return new vscode.Range(position.line, prefix.length - m[0].length, position.line, position.character);
 }
 
 function v33MemberDeclarationCompletions() {
@@ -3464,12 +4730,16 @@ function v3MemberCompletions(index, typeName, options = {}) {
   if (intf) owners.push(intf);
   const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
   if (stat) owners.push(stat);
+  if (!owners.length) {
+    const externalType = (options.externalTypes && options.externalTypes.get(String(typeName || '').toLowerCase())) || (index.externalTypes && index.externalTypes.get(String(typeName || '').toLowerCase()));
+    if (externalType) return v315ExternalMemberCompletions(externalType);
+  }
   for (const owner of owners) {
     for (const prop of owner.properties.values()) addProp(prop, owner);
     if (!options.staticOnly) for (const field of owner.fields.values()) addField(field, owner);
     for (const method of v3AllOwnerMethods(owner)) addMethod(method, owner);
   }
-  if (!items.length) items.push(...v3BuiltinMembers('', typeName));
+  if (!items.length && B4X_V3_TYPE_MEMBERS.has(String(typeName || '').toLowerCase())) items.push(...v3BuiltinMembers('', typeName));
   return items;
 }
 
@@ -3478,11 +4748,13 @@ function v3TopLevelCompletions(index) {
   for (const cls of index.classes.values()) out.push(v3Completion(cls.name, vscode.CompletionItemKind.Class, `B4X++ class${cls.extendsName ? ' extends ' + cls.extendsName : ''}`));
   for (const intf of index.interfaces.values()) out.push(v3Completion(intf.name, vscode.CompletionItemKind.Interface, 'B4X++ interface'));
   for (const mod of index.staticCodes.values()) out.push(v3Completion(mod.name, vscode.CompletionItemKind.Module, 'B4X++ static module'));
-  for (const t of Array.from(B4X_V3_TYPES.values()).slice(0, 80)) out.push(v3Completion(t, vscode.CompletionItemKind.Class, 'B4X / XUI type'));
+  for (const t of Array.from(B4X_V3_TYPES.values())) out.push(v3Completion(t, vscode.CompletionItemKind.Value, 'B4X++ language type'));
+  // Library / platform classes (XUI, B4XView, B4XCanvas, Form, etc.) are intentionally not injected here.
+  // They appear through v315ExternalTypeCompletions only when the active project declares the matching library.
   return out;
 }
 
-function v3TypeCompletions(index) { return v3TopLevelCompletions(index); }
+function v3TypeCompletions(index, document) { return v33UniqueCompletions([...(v3TopLevelCompletions(index) || []), ...(document ? v315ExternalTypeCompletions(document) : [])]); }
 function v3Completion(label, kind, detail) { const item = new vscode.CompletionItem(label, kind); item.detail = detail; return item; }
 function v3B4XKeywordCompletions() { return ['Dim','Sub','End Sub','If','Then','Else','For','Each','Next','Return','Wait For','Sleep','Try','Catch','Select','Case'].map(k => v3Completion(k, vscode.CompletionItemKind.Keyword, 'B4X keyword')); }
 
@@ -3804,6 +5076,15 @@ function v32ResolveLocalVariable(index, info, line, word, clickedRange) {
   const method = v3FindMethodAt(info, line);
   if (!method) return null;
   const key = word.toLowerCase();
+  const closure = findNavigationClosureAt(info, line);
+  if (closure) {
+    for (const p of closure.params || []) {
+      if (p.name.toLowerCase() === key) {
+        const declLine = info.lines[closure.startLine] || '';
+        return { kind: 'local', name: p.name, type: p.type || '', file: info.file, line: closure.startLine, startLine: closure.startLine, endLine: closure.endLine, range: makeWordRange(declLine, closure.startLine, p.name, 0), scopeStart: closure.startLine, scopeEnd: closure.endLine };
+      }
+    }
+  }
   for (const p of method.params || []) {
     if (p.name.toLowerCase() === key) {
       const declLine = info.lines[method.startLine] || '';
@@ -3960,18 +5241,18 @@ function v32ValidateManifestDirectives(info, add) {
   const directives = new Map();
   for (let i = 0; i < info.lines.length; i++) {
     const code = splitCodeAndCommentForNavigation(info.lines[i]).code.trim();
-    const m = code.match(/^#(B4XLib|Version|Author|SupportedPlatforms|DependsOn|B4JDependsOn|B4ADependsOn|B4iDependsOn)\b\s*(.*)$/i);
+    const m = code.match(/^#(B4XLib|B4XLibVersion|B4XLibAuthor|B4XLibSupportedPlatforms|B4XLibDependsOn|B4XLibB4JDependsOn|B4XLibB4ADependsOn|B4XLibB4iDependsOn|Version|Author|SupportedPlatforms|DependsOn|B4JDependsOn|B4ADependsOn|B4iDependsOn)\b\s*(.*)$/i);
     if (m && !directives.has(m[1].toLowerCase())) directives.set(m[1].toLowerCase(), { value: (m[2] || '').trim(), line: i });
   }
   const lib = directives.get('b4xlib');
   if (!lib) return;
   if (!lib.value) add(info.file, lib.line, 'error', '#B4XLib must specify a library name.');
-  const version = directives.get('version');
-  if (!version) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #Version, for example #Version 0.30.');
-  else if (!/^\d+(?:\.\d+){0,2}$/.test(version.value)) add(info.file, version.line, 'warning', `#Version should use a B4X-friendly numeric format, for example 0.30. Current value: ${version.value}`);
-  if (!directives.get('author')) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #Author.');
-  const platforms = directives.get('supportedplatforms');
-  if (platforms && !/\bB4A\b|\bB4J\b|\bB4i\b/i.test(platforms.value)) add(info.file, platforms.line, 'warning', '#SupportedPlatforms should list at least one of B4A, B4J, B4i.');
+  const version = directives.get('b4xlibversion') || directives.get('version');
+  if (!version) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #B4XLibVersion, for example #B4XLibVersion 0.30.');
+  else if (!/^\d+(?:\.\d+){0,2}$/.test(version.value)) add(info.file, version.line, 'warning', `#B4XLibVersion should use a B4X-friendly numeric format, for example 0.30. Current value: ${version.value}`);
+  if (!directives.get('b4xlibauthor') && !directives.get('author')) add(info.file, lib.line, 'warning', 'B4XLib manifest should include #B4XLibAuthor.');
+  const platforms = directives.get('b4xlibsupportedplatforms') || directives.get('supportedplatforms');
+  if (platforms && !/\bB4A\b|\bB4J\b|\bB4i\b/i.test(platforms.value)) add(info.file, platforms.line, 'warning', '#B4XLibSupportedPlatforms should list at least one of B4A, B4J, B4i.');
 }
 
 function v32ValidateDesignerDirectives(info, add) {
@@ -4050,30 +5331,14 @@ function v32OwnerFirstMethod(owner, name) {
 }
 
 
+// Only language-level scalar types are offered without a library.
+// Platform / library types such as XUI, B4XView and B4XCanvas must come from
+// the active project's declared libraries (.xml / .b4xlib), e.g. jXUI / XUI / iXUI.
 const B4X_V3_TYPES = new Map([
-  'string','int','long','float','double','boolean','object','list','map','b4xview','b4xcanvas','xui','bitmap','b4xbitmap','rect','b4xrect','b4xfont','resumablesub','label','button','pane','form','timer','jfx','javaobject','inputstream','outputstream','stringbuilder','color','paint','image','scrollview'
+  'string','int','long','float','double','boolean','object','closure','sub'
 ].map(x => [x, x.replace(/(^|_)([a-z])/g, (_, a, b) => a + b.toUpperCase())]));
 
 const B4X_V3_TYPE_MEMBERS = new Map([
-  ['xui', [
-    { name: 'CreatePanel', params: [{ name: 'EventName', type: 'String' }], returnType: 'B4XView', detail: 'CreatePanel(EventName As String) As B4XView' },
-    { name: 'CreateDefaultFont', params: [{ name: 'Size', type: 'Float' }], returnType: 'B4XFont', detail: 'CreateDefaultFont(Size As Float) As B4XFont' },
-    { name: 'CreateDefaultBoldFont', params: [{ name: 'Size', type: 'Float' }], returnType: 'B4XFont', detail: 'CreateDefaultBoldFont(Size As Float) As B4XFont' },
-    { name: 'PaintOrColorToColor', params: [{ name: 'PaintOrColor', type: 'Object' }], returnType: 'Int', detail: 'PaintOrColorToColor(PaintOrColor As Object) As Int' },
-    { name: 'Color_RGB', params: [{ name: 'R', type: 'Int' }, { name: 'G', type: 'Int' }, { name: 'B', type: 'Int' }], returnType: 'Int' },
-    { name: 'Color_ARGB', params: [{ name: 'A', type: 'Int' }, { name: 'R', type: 'Int' }, { name: 'G', type: 'Int' }, { name: 'B', type: 'Int' }], returnType: 'Int' },
-    { name: 'Color_White', kind: 'property' }, { name: 'Color_Black', kind: 'property' }, { name: 'Color_Transparent', kind: 'property' }
-  ]],
-  ['b4xview', [
-    { name: 'AddView', params: [{ name: 'View', type: 'B4XView' }, { name: 'Left', type: 'Double' }, { name: 'Top', type: 'Double' }, { name: 'Width', type: 'Double' }, { name: 'Height', type: 'Double' }] },
-    { name: 'RemoveAllViews' }, { name: 'SetLayoutAnimated' }, { name: 'LoadLayout' }, { name: 'Width', kind: 'property' }, { name: 'Height', kind: 'property' }, { name: 'Color', kind: 'property' }, { name: 'Visible', kind: 'property' }, { name: 'Text', kind: 'property' }, { name: 'Tag', kind: 'property' }
-  ]],
-  ['b4xcanvas', [
-    { name: 'Initialize', params: [{ name: 'Target', type: 'B4XView' }] }, { name: 'Resize' }, { name: 'Invalidate' }, { name: 'ClearRect' }, { name: 'DrawCircle' }, { name: 'DrawLine' }, { name: 'DrawText' }, { name: 'Release' }
-  ]],
-  ['list', [{ name: 'Initialize' }, { name: 'Add' }, { name: 'Get' }, { name: 'Set' }, { name: 'RemoveAt' }, { name: 'Clear' }, { name: 'Size', kind: 'property' }, { name: 'IsInitialized' }]],
-  ['map', [{ name: 'Initialize' }, { name: 'Put' }, { name: 'Get' }, { name: 'GetDefault' }, { name: 'ContainsKey' }, { name: 'Remove' }, { name: 'Clear' }, { name: 'Size', kind: 'property' }, { name: 'IsInitialized' }]],
-  ['timer', [{ name: 'Initialize' }, { name: 'Enabled', kind: 'property' }, { name: 'Interval', kind: 'property' }]],
   ['string', [{ name: 'Length', kind: 'property' }, { name: 'Trim' }, { name: 'ToLowerCase' }, { name: 'ToUpperCase' }, { name: 'SubString' }, { name: 'SubString2' }, { name: 'Contains' }, { name: 'Replace' }]]
 ]);
 

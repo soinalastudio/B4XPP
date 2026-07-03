@@ -1,0 +1,56 @@
+#Project B4J-NonUI B4XPPClosureConsole
+#Package b4xpp.examples.closures
+#ProjectDir b4x-ide-projects/B4XPPClosureConsole-b4j-nonui
+#MainModule Main
+
+#B4XLib B4XPPClosureConsole
+#B4XLibVersion 1.00
+#B4XLibAuthor B4X++ Team
+#B4XLibDir b4x-libs
+#B4XLibSupportedPlatforms B4J
+
+#Include "services/TaskRunner.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart (Args() As String)
+    Log("=== B4X++ Closure Console Demo ===")
+    BasicGreeting
+    CapturedAdder
+    PassedClosure
+End Sub
+
+Private Sub BasicGreeting
+    Dim say As Closure = Sub(msg As String)
+        Log("Message: " & msg)
+    End Sub
+
+    say("anonymous Sub without capture")
+End Sub
+
+Private Sub CapturedAdder
+    Dim a As Int
+    a = 2
+
+    Dim add As Closure = Sub(i As Int) As Int
+        Return a + i
+    End Sub
+
+    Log("2 + 5 = " & add(5))
+    a = 10
+    Log("10 + 5 = " & add(5))
+End Sub
+
+Private Sub PassedClosure
+    Dim runner As TaskRunner
+    runner.Initialize
+
+    Dim factor As Int = 3
+    Dim multiply As Closure = Sub(value As Int) As Int
+        Return value * factor
+    End Sub
+
+    runner.Add("triple", multiply)
+    runner.RunAll(7)
+End Sub
