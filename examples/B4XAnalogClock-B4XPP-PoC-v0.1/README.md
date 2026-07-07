@@ -4,12 +4,12 @@
 
 It demonstrates B4X++ in a realistic component-library scenario:
 
-- `#Class` and one-class-per-generated-`.bas` output.
-- `#Extends` with flattened `.bas` generation.
+- `Class` and one-class-per-generated-`.bas` output.
+- `Extends` with flattened `.bas` generation.
 - `Super.Initialize` and inherited method reuse.
-- `#Property` with default values.
+- `Property` with default values.
 - inherited `#DesignerProperty` and `#Event` propagation to the final custom view.
-- `#StaticCode` helper module.
+- `StaticCode` helper module.
 - XUI / B4XCanvas custom view usable from code and from the Designer.
 - B4A + B4J `.b4xlib` packaging.
 
@@ -93,7 +93,7 @@ B4X++ keeps the source maintainable, then generates B4X-compatible `.bas` files 
 ## 20260626-1755 notes
 
 This PoC avoids `B4XCanvas.IsInitialized` and uses an internal `mCanvasReady` Boolean, as `B4XCanvas` does not expose `IsInitialized` consistently across B4X targets.
-Generated `#Property` setters also use internal parameter names such as `B4XPP_Value` to avoid B4X compiler name-hiding errors.
+Generated `Property` setters also use internal parameter names such as `B4XPP_Value` to avoid B4X compiler name-hiding errors.
 
 
 ## 20260626-1755 fix notes

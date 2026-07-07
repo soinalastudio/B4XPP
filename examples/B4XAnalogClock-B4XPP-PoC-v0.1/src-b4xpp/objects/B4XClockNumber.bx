@@ -1,17 +1,17 @@
-#Class B4XClockNumber Extends B4XClockDrawableBase Final
+Class B4XClockNumber Extends B4XClockDrawableBase Final
 
-#Property Value As Int = 12
-#Property RadiusRatio As Float = 0.78
-#Property FontSize As Int = 16
+Property Value As Int = 12
+Property RadiusRatio As Float = 0.78
+Property FontSize As Int = 16
 
 Sub Class_Globals
     Private xui As XUI
 End Sub
 
-#Constructor(NumberValue As Int)
+Constructor(NumberValue As Int)
     Super.Initialize
     mValue = NumberValue
-#End Constructor
+End Constructor
 
 Override Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radius As Float)
     If mVisible = False Then Return
@@ -21,4 +21,4 @@ Override Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radiu
     Canvas.DrawText(mValue, tx, ty, xui.CreateDefaultBoldFont(mFontSize), mColor, "CENTER")
 End Sub
 
-#End Class
+End Class

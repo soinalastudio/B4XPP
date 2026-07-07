@@ -1,4 +1,4 @@
-#StaticCode BreakoutMath
+StaticCode BreakoutMath
 
 Sub Process_Globals
 End Sub
@@ -26,4 +26,4 @@ Public Sub CenterOf(LeftValue As Float, SizeValue As Float) As Float
     Return LeftValue + SizeValue / 2
 End Sub
 
-#End StaticCode
+End StaticCode

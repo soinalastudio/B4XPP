@@ -1,0 +1,40 @@
+#B4XPPLib B4XPP.Core
+Class Result(Of T)
+Sub Class_Globals
+    Private mSuccess As Boolean
+    Private mValue As T
+    Private mErrorMessage As String
+End Sub
+
+Public Sub Initialize
+    mSuccess = False
+    mErrorMessage = ""
+End Sub
+
+Public Sub InitializeSuccess(aValue As T)
+    mSuccess = True
+    mValue = aValue
+    mErrorMessage = ""
+End Sub
+
+Public Sub InitializeError(aErrorMessage As String)
+    mSuccess = False
+    mErrorMessage = aErrorMessage
+End Sub
+
+Public Sub IsSuccess As Boolean
+    Return mSuccess
+End Sub
+
+Public Sub IsError As Boolean
+    Return mSuccess = False
+End Sub
+
+Public Sub Value As T
+    Return mValue
+End Sub
+
+Public Sub ErrorMessage As String
+    Return mErrorMessage
+End Sub
+End Class

@@ -1,12 +1,12 @@
-#Class LabelComponent Extends BaseComponent
-#Final
+Class LabelComponent Extends BaseComponent
+Final
 
-#Property Text As String = ""
+Property Text As String = ""
 
-#Constructor(Id As String, Title As String)
+Constructor(Id As String, Title As String)
     Super.Initialize(Id, Title)
     mText = Title
-#End Constructor
+End Constructor
 
 Override Sub ComponentType As String
     Return "label"
@@ -16,4 +16,4 @@ Override Sub Render(Theme As String, Scale As Int, Debug As Boolean) As String
     Return BuildRenderLine(This.ComponentType, Theme, Scale, Debug) & " text=" & mText
 End Sub
 
-#End Class
+End Class

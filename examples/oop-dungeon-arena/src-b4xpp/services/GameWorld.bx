@@ -1,22 +1,22 @@
-#Class GameWorld Final
+Class GameWorld Final
 
-#Property ReadOnly Width As Int = 0
-#Property ReadOnly Height As Int = 0
-#Property ReadOnly Turn As Int = 0
-#Property ReadOnly Hero As Hero
+Property ReadOnly Width As Int = 0
+Property ReadOnly Height As Int = 0
+Property ReadOnly Turn As Int = 0
+Property ReadOnly Hero As Hero
 
 Sub Class_Globals
     Private mActors As List
     Private mCollectibles As List
 End Sub
 
-#Constructor(Width As Int, Height As Int)
+Constructor(Width As Int, Height As Int)
     mWidth = Width
     mHeight = Height
     mTurn = 0
     mActors.Initialize
     mCollectibles.Initialize
-#End Constructor
+End Constructor
 
 Public Sub StartDemo
     Dim heroPlayer As Hero
@@ -179,4 +179,4 @@ Public Sub Render As String
     Return sb.ToString
 End Sub
 
-#End Class
+End Class

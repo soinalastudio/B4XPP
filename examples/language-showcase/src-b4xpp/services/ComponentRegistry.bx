@@ -1,9 +1,9 @@
-#Class ComponentRegistry
+Class ComponentRegistry
 
-#Property WriteOnly LastRendered As String = ""
+Property WriteOnly LastRendered As String = ""
 
-#Constructor
-#End Constructor
+Constructor
+End Constructor
 
 Virtual Sub Store(Component As Object) As String
     Dim renderable As Poly IRenderable
@@ -12,4 +12,4 @@ Virtual Sub Store(Component As Object) As String
     Return mLastRendered
 End Sub
 
-#End Class
+End Class

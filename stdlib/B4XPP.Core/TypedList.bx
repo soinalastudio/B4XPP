@@ -1,0 +1,40 @@
+#B4XPPLib B4XPP.Core
+Class TypedList(Of T)
+Sub Class_Globals
+    Private mList As List
+End Sub
+
+Public Sub Initialize
+    mList.Initialize
+End Sub
+
+Public Sub Add(aValue As T)
+    mList.Add(aValue)
+End Sub
+
+Public Sub Get(Index As Int) As T
+    Return mList.Get(Index)
+End Sub
+
+Public Sub Set(Index As Int, aValue As T)
+    mList.Set(Index, aValue)
+End Sub
+
+Public Sub RemoveAt(Index As Int) As T
+    Dim RemovedValue As T = mList.Get(Index)
+    mList.RemoveAt(Index)
+    Return RemovedValue
+End Sub
+
+Public Sub Clear
+    mList.Clear
+End Sub
+
+Public Sub Size As Int
+    Return mList.Size
+End Sub
+
+Public Sub RawList As List
+    Return mList
+End Sub
+End Class

@@ -1,4 +1,4 @@
-#StaticCode ArenaMath
+StaticCode ArenaMath
 
 Sub Process_Globals
 End Sub
@@ -34,4 +34,4 @@ Public Sub DirectionLabel(DX As Int, DY As Int) As String
     Return "north"
 End Sub
 
-#End StaticCode
+End StaticCode

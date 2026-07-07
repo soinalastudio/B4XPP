@@ -1,0 +1,24 @@
+#B4XPPLib B4XPP.Core
+Class EventArgs(Of T)
+Sub Class_Globals
+    Private mName As String
+    Private mData As T
+End Sub
+
+Public Sub Initialize
+    mName = ""
+End Sub
+
+Public Sub InitializeValues(aName As String, aData As T)
+    mName = aName
+    mData = aData
+End Sub
+
+Public Sub Name As String
+    Return mName
+End Sub
+
+Public Sub Data As T
+    Return mData
+End Sub
+End Class

@@ -1,23 +1,23 @@
-#Class GameObject Abstract Implements IRenderable
+Class GameObject Abstract Implements IRenderable
 
-#Property ReadOnly Id As String = ""
-#Property Name As String = "Object"
-#Property X As Int = 0
-#Property Y As Int = 0
+Property ReadOnly Id As String = ""
+Property Name As String = "Object"
+Property X As Int = 0
+Property Y As Int = 0
 
-#Constructor(Id As String, Name As String)
+Constructor(Id As String, Name As String)
     mId = Id
     mName = Name
     mX = 0
     mY = 0
-#End Constructor
+End Constructor
 
-#Constructor(Id As String, Name As String, X As Int, Y As Int)
+Constructor(Id As String, Name As String, X As Int, Y As Int)
     mId = Id
     mName = Name
     mX = X
     mY = Y
-#End Constructor
+End Constructor
 
 Virtual Sub Render As String
     Return mName & "@" & FormatPosition
@@ -31,4 +31,4 @@ Protected Sub FormatPosition As String
     Return "(" & mX & "," & mY & ")"
 End Sub
 
-#End Class
+End Class

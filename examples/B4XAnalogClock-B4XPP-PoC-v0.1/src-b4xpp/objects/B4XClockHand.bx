@@ -1,9 +1,9 @@
-#Class B4XClockHand Extends B4XClockDrawableBase
+Class B4XClockHand Extends B4XClockDrawableBase
 
-#Property AngleDegrees As Float = 0
-#Property LengthRatio As Float = 0.70
-#Property TailRatio As Float = 0.08
-#Property HandWidth As Float = 3
+Property AngleDegrees As Float = 0
+Property LengthRatio As Float = 0.70
+Property TailRatio As Float = 0.08
+Property HandWidth As Float = 3
 
 Sub Class_Globals
     Private mKind As String
@@ -29,4 +29,4 @@ Public Sub getKind As String
     Return mKind
 End Sub
 
-#End Class
+End Class

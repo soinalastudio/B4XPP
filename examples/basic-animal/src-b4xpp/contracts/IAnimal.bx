@@ -1,4 +1,4 @@
-#Interface IAnimal
+Interface IAnimal
 Sub Speak As String
 Sub Move(Distance As Int) As String
-#End Interface
+End Interface

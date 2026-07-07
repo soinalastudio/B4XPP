@@ -1,11 +1,11 @@
-#Class Hero Extends Actor Final
+Class Hero Extends Actor Final
 
-#Property Score As Int = 0
+Property Score As Int = 0
 
-#Constructor(Id As String, Name As String, X As Int, Y As Int)
+Constructor(Id As String, Name As String, X As Int, Y As Int)
     Super.Initialize(Id, Name, X, Y, 30, 6)
     setScore(0)
-#End Constructor
+End Constructor
 
 Override Sub Team As String
     Return "hero"
@@ -54,4 +54,4 @@ Override Sub Render As String
     Return Super.Render & " score=" & getScore
 End Sub
 
-#End Class
+End Class

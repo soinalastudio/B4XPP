@@ -50,7 +50,7 @@
       "patterns": [
         {
           "name": "keyword.control.directive.b4xpp",
-          "match": "(?i)^\\s*#(?:Project|Package|ProjectDir|MobileMain|MainModule|ProjectDependsOn|ProjectB4ADependsOn|ProjectB4JDependsOn|ProjectB4iDependsOn|B4XLib|B4XLibDir|B4XLibVersion|B4XLibAuthor|B4XLibSupportedPlatforms|B4XLibDependsOn|B4XLibB4ADependsOn|B4XLibB4JDependsOn|B4XLibB4iDependsOn|LibraryFilesDir|Version|Author|DependsOn|B4ADependsOn|B4JDependsOn|B4iDependsOn|SupportedPlatforms|ShortName|Include|Interface|End\\s+Interface|Class|End\\s+Class|MainModule|Extends|Implements|Abstract|Final|Constructor|End\\s+Constructor|Property|Region|End\\s+Region|If|Else|End\\s+If|IgnoreWarnings|DesignerProperty|Event|RaisesSynchronousEvents|AdditionalJar|AdditionalLib|BridgeLogger|CustomBuildAction|DebuggerForceStandardAssets|DebuggerForceFullDeployment|ExcludedLib|LibraryAuthor|LibraryName|LibraryVersion|Macro|MacroAfter|MacroEnd|MergeLibraries|ModuleVisibility|PackagerProperty|SupportedOrientations|VersionCode|VersionName)\\b"
+          "match": "(?i)^\\s*#(?:Project|Package|ProjectDir|MobileMain|MainModule|ProjectDependsOn|ProjectB4ADependsOn|ProjectB4JDependsOn|ProjectB4iDependsOn|B4XLib|B4XLibDir|B4XLibVersion|B4XLibAuthor|B4XLibSupportedPlatforms|B4XLibDependsOn|B4XLibB4ADependsOn|B4XLibB4JDependsOn|B4XLibB4iDependsOn|B4XPPLib|B4XPPLibDir|B4XPPLibVersion|B4XPPLibAuthor|B4XPPLibSupportedPlatforms|B4XPPLibDependsOn|B4XPPLibB4ADependsOn|B4XPPLibB4JDependsOn|B4XPPLibB4iDependsOn|LibraryFilesDir|Version|Author|DependsOn|B4ADependsOn|B4JDependsOn|B4iDependsOn|SupportedPlatforms|ShortName|Include|Interface|End\\s+Interface|Class|End\\s+Class|MainModule|Extends|Implements|Abstract|Final|Constructor|End\\s+Constructor|Property|Region|End\\s+Region|If|Else|End\\s+If|IgnoreWarnings|DesignerProperty|Event|RaisesSynchronousEvents|AdditionalJar|AdditionalLib|BridgeLogger|CustomBuildAction|DebuggerForceStandardAssets|DebuggerForceFullDeployment|ExcludedLib|LibraryAuthor|LibraryName|LibraryVersion|Macro|MacroAfter|MacroEnd|MergeLibraries|ModuleVisibility|PackagerProperty|SupportedOrientations|VersionCode|VersionName)\\b"
         }
       ]
     },
@@ -58,7 +58,7 @@
       "patterns": [
         {
           "name": "storage.modifier.oop.b4xpp",
-          "match": "(?i)\\b(?:Override|Virtual|Protected|Abstract|Final|Poly|Closure|Super|This|ReadOnly|WriteOnly)\\b"
+          "match": "(?i)\\b(?:Override|Virtual|Protected|Abstract|Final|Async|Await|Poly|Closure|Super|This|ReadOnly|WriteOnly)\\b"
         }
       ]
     },
@@ -66,7 +66,7 @@
       "patterns": [
         {
           "name": "keyword.control.b4xpp",
-          "match": "(?i)\\b(?:Sub|End\\s+Sub|If|Then|Else|End\\s+If|For|Each|Next|Do|Loop|While|Wend|Select|Case|End\\s+Select|Try|Catch|End\\s+Try|Return|Exit|Continue|Wait\\s+For|CallSub|CallSubDelayed|Sleep|As|Is|And|Or|Not|True|False|Null|Dim|Private|Public|Type|Map|List)\\b"
+          "match": "(?i)\\b(?:Class|End\\s+Class|Interface|End\\s+Interface|StaticCode|End\\s+StaticCode|Constructor|End\\s+Constructor|Property|Extends|Implements|Sub|End\\s+Sub|If|Then|Else|End\\s+If|For|Each|Next|Do|Loop|While|Wend|Select|Case|End\\s+Select|Try|Catch|End\\s+Try|Return|Exit|Continue|Wait\\s+For|CallSub|CallSubDelayed|Sleep|As|Is|And|Or|Not|True|False|Null|Dim|Private|Public|Type|Map|List)\\b"
         }
       ]
     },

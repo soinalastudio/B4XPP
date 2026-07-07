@@ -32,10 +32,10 @@
 
   let state = parseInitialState();
   const arrayKeys = ['b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs', 'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs', 'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'];
-  const boolKeys = ['validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles'];
-  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'packageName', 'platform'];
-  const dirStringKeys = ['mainBxPath', 'projectPlatform', 'projectName', 'packageName', 'projectDir', 'mainModule', 'b4xLib', 'b4xLibVersion', 'b4xLibAuthor', 'b4xLibDir'];
-  const dirArrayKeys = ['projectDependsOn', 'projectB4JDependsOn', 'projectB4ADependsOn', 'projectB4iDependsOn', 'b4xLibDependsOn', 'b4xLibB4JDependsOn', 'b4xLibB4ADependsOn', 'b4xLibB4iDependsOn'];
+  const boolKeys = ['validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles', 'buildShowWarnings', 'buildUseBaseFolder'];
+  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform', 'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath', 'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand', 'buildConfiguration', 'buildTask'];
+  const dirStringKeys = ['mainBxPath', 'projectPlatform', 'projectName', 'packageName', 'projectDir', 'mainModule', 'b4xLib', 'b4xLibVersion', 'b4xLibAuthor', 'b4xLibDir', 'b4xppLib', 'b4xppLibVersion', 'b4xppLibAuthor', 'b4xppLibDir'];
+  const dirArrayKeys = ['projectDependsOn', 'projectB4JDependsOn', 'projectB4ADependsOn', 'projectB4iDependsOn', 'b4xLibDependsOn', 'b4xLibB4JDependsOn', 'b4xLibB4ADependsOn', 'b4xLibB4iDependsOn', 'b4xppLibSupportedPlatforms', 'b4xppLibDependsOn', 'b4xppLibB4JDependsOn', 'b4xppLibB4ADependsOn', 'b4xppLibB4iDependsOn'];
 
   function setTextarea(key, values) {
     const node = el(idForKey(key));
@@ -117,25 +117,28 @@
     return values;
   }
 
-  function currentPlatformDependsKey() {
+  function currentPlatformDependsKey(kind) {
     const d = collectDirectiveValues();
     const project = String(d.projectPlatform || '').toLowerCase();
-    const supported = (d.b4xLibSupportedPlatforms || d.supportedPlatforms || []).map(v => String(v).toLowerCase());
+    const sourcePackage = String(kind || '').toLowerCase() === 'b4xpplib';
+    const supportedSource = sourcePackage ? (d.b4xppLibSupportedPlatforms || []) : (d.b4xLibSupportedPlatforms || d.supportedPlatforms || []);
+    const supported = supportedSource.map(v => String(v).toLowerCase());
+    const prefix = sourcePackage ? 'b4xppLib' : 'project';
     if (supported.length === 1) {
-      if (supported[0] === 'b4j') return 'projectB4JDependsOn';
-      if (supported[0] === 'b4a') return 'projectB4ADependsOn';
-      if (supported[0] === 'b4i') return 'projectB4iDependsOn';
+      if (supported[0] === 'b4j') return prefix + 'B4JDependsOn';
+      if (supported[0] === 'b4a') return prefix + 'B4ADependsOn';
+      if (supported[0] === 'b4i') return prefix + 'B4iDependsOn';
     }
-    if (project.includes('b4a')) return 'projectB4ADependsOn';
-    if (project.includes('b4i')) return 'projectB4iDependsOn';
-    return 'projectB4JDependsOn';
+    if (project.includes('b4a')) return prefix + 'B4ADependsOn';
+    if (project.includes('b4i')) return prefix + 'B4iDependsOn';
+    return prefix + 'B4JDependsOn';
   }
 
   function selectedDependsSet() {
     const d = collectDirectiveValues();
     const all = [
       ...(d.projectDependsOn || []), ...(d.projectB4JDependsOn || []), ...(d.projectB4ADependsOn || []), ...(d.projectB4iDependsOn || []),
-      ...(d.b4xLibDependsOn || []), ...(d.b4xLibB4JDependsOn || []), ...(d.b4xLibB4ADependsOn || []), ...(d.b4xLibB4iDependsOn || [])
+      ...(d.b4xLibDependsOn || []), ...(d.b4xLibB4JDependsOn || []), ...(d.b4xLibB4ADependsOn || []), ...(d.b4xLibB4iDependsOn || []), ...(d.b4xppLibDependsOn || []), ...(d.b4xppLibB4JDependsOn || []), ...(d.b4xppLibB4ADependsOn || []), ...(d.b4xppLibB4iDependsOn || [])
     ];
     return new Set(all.map(v => String(v).toLowerCase()));
   }
@@ -154,14 +157,14 @@
       const row = document.createElement('label');
       row.className = 'librow';
       const checked = selected.has(String(item.name).toLowerCase());
-      row.innerHTML = '<input type="checkbox" data-lib-name="' + escapeAttr(item.name) + '" ' + (checked ? 'checked' : '') + '> <span>' + escapeHtml(item.name) + '</span> <code>' + escapeHtml(item.kind || '') + '</code>';
+      row.innerHTML = '<input type="checkbox" data-lib-name="' + escapeAttr(item.name) + '" data-lib-kind="' + escapeAttr(item.kind || '') + '" ' + (checked ? 'checked' : '') + '> <span>' + escapeHtml(item.name) + '</span> <code>' + escapeHtml(item.kind || '') + '</code>';
       host.appendChild(row);
     }
-    host.querySelectorAll('[data-lib-name]').forEach(cb => cb.addEventListener('change', () => toggleLibrary(cb.getAttribute('data-lib-name'), cb.checked)));
+    host.querySelectorAll('[data-lib-name]').forEach(cb => cb.addEventListener('change', () => toggleLibrary(cb.getAttribute('data-lib-name'), cb.checked, cb.getAttribute('data-lib-kind'))));
   }
 
-  function toggleLibrary(name, checked) {
-    const key = currentPlatformDependsKey();
+  function toggleLibrary(name, checked, kind) {
+    const key = currentPlatformDependsKey(kind);
     let list = getDirTextarea(key);
     const values = new Set(list.map(v => String(v).toLowerCase()));
     if (checked) {
@@ -233,7 +236,7 @@
     try {
       wireButtons();
       applyState(state);
-      setStatus('UI ready: settings-save-fix6');
+      setStatus('UI ready: generics-0.4.2');
       postToExtension({ type: 'ready' });
     } catch (err) {
       setStatus('B4X++ WebView script error: ' + (err && err.message ? err.message : err));

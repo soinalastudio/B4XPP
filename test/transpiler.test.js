@@ -17,7 +17,7 @@ Sub Describe(Name As String, Count As Int, Location As String) As String
 #End Interface
 
 #Class Base Implements ISpeaker
-#Property Name As String = "Unknown"
+Property Name As String = "Unknown"
 #Constructor(Name As String)
     mName = Name
 #End Constructor
@@ -59,6 +59,61 @@ assert(child.content.includes('B4XPP_Super_Base_Initialize'), 'Must flatten pare
 assert(child.content.includes('Public Sub Speak'), 'Override Sub must become Public Sub');
 assert(child.content.includes('B4XPP_Super_Base_Speak'), 'Super.Method must call flattened parent implementation');
 assert(!child.content.includes('B4XPP_Dispatch'), 'Classes without Poly / implicit dynamic dispatch must not include B4XPP_Dispatch');
+
+const naturalSyntaxSource = `#MainModule Main
+
+Sub AppStart (Args() As String)
+    Dim dogInstance As Dog
+    dogInstance.Initialize("Rex")
+    Log(dogInstance.Speak)
+End Sub
+
+Interface IAnimal
+Sub Speak As String
+End Interface
+
+Class Animal Abstract Implements IAnimal
+Property ReadOnly Name As String = "Unknown"
+Constructor(Name As String)
+    mName = Name
+End Constructor
+Virtual Sub Speak As String
+    Return mName
+End Sub
+End Class
+
+Class Dog Extends Animal Final
+Constructor(Name As String)
+    Super.Initialize(Name)
+End Constructor
+Override Sub Speak As String
+    Return Super.Name & " says woof"
+End Sub
+End Class
+`;
+
+const naturalSyntaxResult = transpileText(path.join(__dirname, 'NaturalSyntax.bx'), naturalSyntaxSource, {
+  addGeneratedHeader: false,
+  workspaceRoot: path.join(__dirname, '..')
+});
+assert.strictEqual(naturalSyntaxResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Bare Class / Constructor / Property syntax must be accepted');
+assert(naturalSyntaxResult.outputs.some(o => o.fileName === 'Animal.bas'), 'Bare Class Animal must generate Animal.bas');
+const naturalDog = naturalSyntaxResult.outputs.find(o => o.fileName === 'Dog.bas');
+assert(naturalDog && naturalDog.content.includes('Public Sub Initialize(Name As String)'), 'Bare Constructor must generate Initialize');
+assert(naturalDog.content.includes('B4XPP_Super_Animal_Initialize'), 'Bare Constructor with Super.Initialize must flatten parent initializer');
+
+const nativePropertyDirectiveResult = transpileText(path.join(__dirname, 'NativePropertyDirective.bx'), `Class NativePropertyDirective
+#Property NativeB4XName As String
+Property GeneratedName As String = "ok"
+End Class
+`, {
+  addGeneratedHeader: false,
+  workspaceRoot: path.join(__dirname, '..')
+});
+const nativePropertyContent = nativePropertyDirectiveResult.outputs.find(o => o.fileName === 'NativePropertyDirective.bas').content;
+assert(nativePropertyContent.includes('#Property NativeB4XName As String'), 'Native #Property directives must be preserved in generated B4X.');
+assert(!nativePropertyContent.includes('mNativeB4XName'), 'Native #Property must not generate a B4X++ backing field.');
+assert(nativePropertyContent.includes('Private mGeneratedName As String = "ok"'), 'Bare Property must still generate a B4X++ backing field.');
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'b4xpp-test-'));
 const src = path.join(temp, 'src-b4xpp');
@@ -124,7 +179,7 @@ assert.strictEqual(workspaceResult.diagnostics.filter(d => d.severity === 'error
 console.log('B4X++ transpiler tests OK');
 
 const visibilitySource = `#Class VisibilityBase
-#Property Protected AngleDegrees As Double = 0
+Property Protected AngleDegrees As Double = 0
 Sub Class_Globals
     Private mSecret As String
     Protected mShared As String
@@ -157,7 +212,7 @@ assert.strictEqual(visibilityResult.diagnostics.filter(d => d.severity === 'erro
 const visibilityChild = visibilityResult.outputs.find(o => o.fileName === 'VisibilityChild.bas').content;
 assert(visibilityChild.includes('Private B4XPP_Private_VisibilityBase_mSecret As String'), 'Inherited Private fields must be renamed during flattening');
 assert(visibilityChild.includes('Private mShared As String'), 'Protected fields must be lowered to Private but keep their inherited name');
-assert(visibilityChild.includes('Private Sub getAngleDegrees As Double'), 'Protected #Property getters must be Private in generated B4X');
+assert(visibilityChild.includes('Private Sub getAngleDegrees As Double'), 'Protected Property getters must be Private in generated B4X');
 assert(visibilityChild.includes('Private Sub ProtectedName As String'), 'Protected Sub must be Private in generated B4X');
 assert(visibilityChild.includes('B4XPP_Private_VisibilityBase_SecretName'), 'Inherited Private methods must be renamed during flattening');
 
@@ -205,9 +260,9 @@ assert.strictEqual(validProtectedInternalAccess.diagnostics.filter(d => d.severi
 console.log('B4X++ v0.2 member access tests OK');
 
 const customPropertyResult = transpileText(path.join(__dirname, 'CustomPropertyAccessors.bx'), `#Class CustomPropertyAccessors
-#Property Public Text As String = ""
-#Property Public Value As Int = 0
-#Property Protected Angle As Double = 0
+Property Public Text As String = ""
+Property Public Value As Int = 0
+Property Protected Angle As Double = 0
 
 Public Get Text As String
     Return mText.ToUpperCase
@@ -229,15 +284,15 @@ End Get
 #End Class`, { addGeneratedHeader: false });
 assert.strictEqual(customPropertyResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Custom property accessors should not produce errors');
 const customPropertyContent = customPropertyResult.outputs.find(o => o.fileName === 'CustomPropertyAccessors.bas').content;
-assert(customPropertyContent.includes('Private mText As String = ""'), 'Custom accessor #Property should still generate its backing field');
+assert(customPropertyContent.includes('Private mText As String = ""'), 'Custom accessor Property should still generate its backing field');
 assert(customPropertyContent.includes('Public Sub getText As String'), 'Custom Get must generate getText');
 assert(customPropertyContent.includes('Return mText.ToUpperCase'), 'Custom getter body must be preserved');
-assert(customPropertyContent.includes('Public Sub setText(aValue As String)'), 'Custom Set must generate setText with a safe parameter name');
-assert(customPropertyContent.includes('mText = aValue.Trim'), 'Custom setter body must be preserved with renamed parameter');
+assert(customPropertyContent.includes('Public Sub setText(Value As String)'), 'Custom Set must preserve normal parameter names such as Value');
+assert(customPropertyContent.includes('mText = Value.Trim'), 'Custom setter body must be preserved');
 assert(!customPropertyContent.includes('Return mText\nEnd Sub\n\n\' B4X++ custom property accessor: public set Text'), 'Auto getter must not be generated when custom getter exists');
 assert(customPropertyContent.includes('Public Sub getValue As Int'), 'Auto getter must remain when only custom setter exists');
-assert(customPropertyContent.includes('Public Sub setValue(aValue As Int)'), 'Setter parameter that hides the B4X property name must be renamed');
-assert(customPropertyContent.includes('mValue = aValue'), 'Renamed setter parameter must be rewritten in body');
+assert(customPropertyContent.includes('Public Sub setValue(Value As Int)'), 'Setter parameter named like the property is allowed');
+assert(customPropertyContent.includes('mValue = Value'), 'Setter parameter body must be preserved');
 assert(customPropertyContent.includes('Private Sub getAngle As Double'), 'Protected custom getter must be lowered to Private in generated B4X');
 
 const computedPropertyResult = transpileText(path.join(__dirname, 'ComputedProperty.bx'), `#Class ComputedProperty
@@ -247,7 +302,7 @@ End Get
 Private Set DebugName(Name As String)
 End Set
 #End Class`, { addGeneratedHeader: false });
-assert.strictEqual(computedPropertyResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Manual computed properties should be accepted without #Property');
+assert.strictEqual(computedPropertyResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Manual computed properties should be accepted without Property');
 const computedContent = computedPropertyResult.outputs.find(o => o.fileName === 'ComputedProperty.bas').content;
 assert(computedContent.includes('Public Sub getIsReady As Boolean'), 'Manual computed getter must generate getIsReady');
 assert(computedContent.includes('Private Sub setDebugName(Name As String)'), 'Manual private setter must generate a Private setDebugName');
@@ -255,8 +310,8 @@ assert(computedContent.includes('Private Sub setDebugName(Name As String)'), 'Ma
 console.log('B4X++ v0.2.1 custom property accessor tests OK');
 
 const propertyAssignmentResult = transpileText(path.join(__dirname, 'PropertyAssignmentSugar.bx'), `#Class PropertyAssignmentSugar
-#Property X As Float = 0
-#Property Width As Float = 10
+Property X As Float = 0
+Property Width As Float = 10
 #Constructor(X As Float, Width As Float)
     X = X
     Width = Width
@@ -267,14 +322,14 @@ End Sub
 #End Class`, { addGeneratedHeader: false });
 assert.strictEqual(propertyAssignmentResult.diagnostics.filter(d => d.severity === 'error').length, 0, 'Property assignment sugar should not produce errors');
 const propertyAssignmentContent = propertyAssignmentResult.outputs.find(o => o.fileName === 'PropertyAssignmentSugar.bas').content;
-assert(propertyAssignmentContent.includes('Public Sub Initialize(aX As Float, aWidth As Float)'), 'Unsafe constructor parameter names should be renamed to aX / aWidth');
-assert(propertyAssignmentContent.includes('setX(aX)'), 'Bare property assignment X = value must generate setX(value)');
-assert(propertyAssignmentContent.includes('If aWidth > 0 Then setWidth(aWidth)'), 'Inline one-line If property assignment must generate a setter call after Then');
-assert(propertyAssignmentContent.includes('Public Sub Resize(aWidth As Float)'), 'Unsafe method parameter names should be renamed to aWidth');
+assert(propertyAssignmentContent.includes('Public Sub Initialize(X As Float, Width As Float)'), 'Normal constructor parameter names should be preserved');
+assert(propertyAssignmentContent.includes('setX(X)'), 'Bare property assignment X = value must generate setX(value)');
+assert(propertyAssignmentContent.includes('If Width > 0 Then setWidth(Width)'), 'Inline one-line If property assignment must generate a setter call after Then');
+assert(propertyAssignmentContent.includes('Public Sub Resize(Width As Float)'), 'Normal method parameter names should be preserved');
 
 const propertyReadResult = transpileText(path.join(__dirname, 'PropertyReadSugar.bx'), `#Class PropertyReadSugar
-#Property Points As Int = 10
-#Property Broken As Boolean = False
+Property Points As Int = 10
+Property Broken As Boolean = False
 Public Sub Hit As Int
     If Broken Then Return 0
     Broken = True
@@ -452,8 +507,8 @@ console.log('B4X++ XUI Breakout example tests OK');
 // B4X++ consolidated validation core tests
 //────────────────────────────────────────────────────────────
 const strictPropertyValidation = transpileText(path.join(__dirname, 'StrictPropertyValidation.bx'), `#Class Brick
-#Property Points As Int = 10
-#Property Broken As Boolean = False
+Property Points As Int = 10
+Property Broken As Boolean = False
 Public Sub Hit As Int
     If Broken Then Return 0
     Broken = True
@@ -743,6 +798,22 @@ assert.strictEqual(closureRuntimeOutput.kind, 'class', 'B4XPPClosure runtime mus
 assert(closureRuntimeOutput.content.includes('Public Sub Initialize(Callback As Object, MethodName As String, Captures As List)'), 'B4XPPClosure must expose Initialize(...) as the real first constructor with captures.');
 assert(!closureRuntimeOutput.content.includes('Public Sub Initialize2'), 'B4XPPClosure runtime must not expose Initialize2; generated B4X classes require Initialize(...) as the real constructor.');
 assert(!escapeDemo.includes('.Initialize2(Me, "B4XPP_Closure_ClosureEscapeDemo_Test_1"'), 'Generated escaping closures must not call Initialize2 as the first method on a fresh class instance.');
+
+const closureAssignmentResult = transpileText(path.join(__dirname, 'ClosureAssignment.bx'), `#Class ClosureAssignmentDemo
+Public Sub Test
+    Dim c As Closure
+    c = Sub(name As String) As Object
+        Return name
+    End Sub
+    Log(c.Run1("Buddy"))
+End Sub
+#End Class`, { addGeneratedHeader: false, validationStrict: true, enableSemanticDiagnostics: true });
+const assignmentDemo = closureAssignmentResult.outputs.find(o => o.fileName === 'ClosureAssignmentDemo.bas').content;
+assert(assignmentDemo.includes('Dim c As B4XPPClosure'), 'Separate Closure variable declaration must generate as B4XPPClosure.');
+assert(!assignmentDemo.includes('c = Sub'), 'Separate closure assignment must not leave an anonymous Sub literal in generated B4X.');
+assert(assignmentDemo.includes('c.Initialize(Me, "B4XPP_Closure_ClosureAssignmentDemo_Test_1"'), 'Separate closure assignment must initialize the runtime B4XPPClosure value.');
+assert(assignmentDemo.includes('Public Sub B4XPP_Closure_ClosureAssignmentDemo_Test_1(B4XPP_ctx As List) As Object'), 'Separate closure assignment must generate a runtime closure body.');
+assert(closureAssignmentResult.outputs.some(o => o.fileName === 'B4XPPClosure.bas'), 'Separate closure assignment must emit B4XPPClosure runtime.');
 
 const extensionSourceForClosurePolicy = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 assert(extensionSourceForClosurePolicy.includes("'string','int','long','float','double','boolean','object','closure','sub'"), 'VS Code type completion should include the preferred B4X++ Closure type and legacy Sub alias.');

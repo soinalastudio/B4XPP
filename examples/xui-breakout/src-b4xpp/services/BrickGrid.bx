@@ -1,6 +1,6 @@
-#Class BrickGrid Final
+Class BrickGrid Final
 
-#Property Remaining As Int = 0
+Property Remaining As Int = 0
 
 Sub Class_Globals
     Private xui As XUI
@@ -66,4 +66,4 @@ Public Sub CheckBallCollision(aGameBall As Ball) As Int
     Return 0
 End Sub
 
-#End Class
+End Class

@@ -1,4 +1,4 @@
-#Class B4XClockViewBase Abstract
+Class B4XClockViewBase Abstract
 
 #Event: Click (Tag As Object)
 #DesignerProperty: Key: AutoStart, DisplayName: Auto Start, FieldType: Boolean, DefaultValue: True, Description: Start the clock automatically when the view is created.
@@ -15,19 +15,19 @@
 #DesignerProperty: Key: ShowTicks, DisplayName: Show Ticks, FieldType: Boolean, DefaultValue: True, Description: Show minute tick marks.
 #DesignerProperty: Key: ShowSecondHand, DisplayName: Show Second Hand, FieldType: Boolean, DefaultValue: True, Description: Show the second hand.
 
-#Property AutoStart As Boolean = True
-#Property FaceColor As Int = 0xFFFFFFFF
-#Property BorderColor As Int = 0xFF1F2937
-#Property HandColor As Int = 0xFF111827
-#Property SecondHandColor As Int = 0xFFE11D48
-#Property TickColor As Int = 0xFF374151
-#Property NumberColor As Int = 0xFF111827
-#Property CenterColor As Int = 0xFF111827
-#Property Padding As Int = 8
-#Property NumberSize As Int = 16
-#Property ShowNumbers As Boolean = True
-#Property ShowTicks As Boolean = True
-#Property ShowSecondHand As Boolean = True
+Property AutoStart As Boolean = True
+Property FaceColor As Int = 0xFFFFFFFF
+Property BorderColor As Int = 0xFF1F2937
+Property HandColor As Int = 0xFF111827
+Property SecondHandColor As Int = 0xFFE11D48
+Property TickColor As Int = 0xFF374151
+Property NumberColor As Int = 0xFF111827
+Property CenterColor As Int = 0xFF111827
+Property Padding As Int = 8
+Property NumberSize As Int = 16
+Property ShowNumbers As Boolean = True
+Property ShowTicks As Boolean = True
+Property ShowSecondHand As Boolean = True
 
 Sub Class_Globals
     Private xui As XUI
@@ -202,4 +202,4 @@ End Sub
 Virtual Sub Draw
 End Sub
 
-#End Class
+End Class

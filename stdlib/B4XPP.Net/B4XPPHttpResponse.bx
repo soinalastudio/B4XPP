@@ -1,0 +1,32 @@
+#B4XPPLib B4XPP.Net
+Class B4XPPHttpResponse
+Sub Class_Globals
+    Private mSuccess As Boolean
+    Private mBody As String
+    Private mErrorMessage As String
+    Private mStatusCode As Int
+End Sub
+
+Public Sub Initialize(aSuccess As Boolean, aBody As String, aErrorMessage As String, aStatusCode As Int)
+    mSuccess = aSuccess
+    mBody = aBody
+    mErrorMessage = aErrorMessage
+    mStatusCode = aStatusCode
+End Sub
+
+Public Sub Success As Boolean
+    Return mSuccess
+End Sub
+
+Public Sub Body As String
+    Return mBody
+End Sub
+
+Public Sub ErrorMessage As String
+    Return mErrorMessage
+End Sub
+
+Public Sub StatusCode As Int
+    Return mStatusCode
+End Sub
+End Class

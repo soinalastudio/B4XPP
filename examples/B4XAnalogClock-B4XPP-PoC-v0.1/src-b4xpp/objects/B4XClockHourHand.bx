@@ -1,10 +1,10 @@
-#Class B4XClockHourHand Extends B4XClockHand Final
+Class B4XClockHourHand Extends B4XClockHand Final
 
-#Constructor
+Constructor
     Super.Initialize("hour")
     mLengthRatio = 0.48
     mTailRatio = 0.06
     mHandWidth = 5dip
-#End Constructor
+End Constructor
 
-#End Class
+End Class

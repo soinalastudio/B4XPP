@@ -1,8 +1,8 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.4.0: OOP flattening, property sugar, validation core, platform-scoped library indexing, Project Settings UI, native B4X project header awareness, B4XLib directives, library-driven IntelliSense, closure literals, project sync and .b4xlib builds.",
-  "version": "0.4.0",
+  "description": "VS Code extension for B4X++ v0.5.0: consolidated OOP, async, generics, packaging, build, and remap tooling for B4X.",
+  "version": "0.5.0",
   "publisher": "soinala-studio",
   "license": "MIT",
   "engines": {
@@ -75,6 +75,11 @@
         "category": "B4X++"
       },
       {
+        "command": "b4xpp.buildB4XPPLib",
+        "title": "Build .b4xpplib",
+        "category": "B4X++"
+      },
+      {
         "command": "b4xpp.remapB4XErrors",
         "title": "Remap B4X Compiler / Runtime Errors",
         "category": "B4X++"
@@ -86,7 +91,22 @@
       },
       {
         "command": "b4xpp.buildB4JWithRemap",
-        "title": "Run B4J Build Command + Remap Errors",
+        "title": "Build B4J + Remap Errors",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.buildB4AWithRemap",
+        "title": "Build B4A + Remap Errors",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.buildB4iWithRemap",
+        "title": "Build B4i + Remap Errors",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.buildCurrentPlatformWithRemap",
+        "title": "Build Current #Project + Remap Errors",
         "category": "B4X++"
       },
       {
@@ -158,10 +178,60 @@
           "default": "b4x-libs",
           "description": "Output folder for generated .b4xlib files."
         },
+        "b4xpp.b4xpplibDir": {
+          "type": "string",
+          "default": "b4xpp-libs",
+          "description": "Output folder for generated .b4xpplib source packages."
+        },
         "b4xpp.b4jBuildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional B4J build command used by 'Run B4J Build Command + Remap Errors'. Supported placeholders: {project}, {workspace}, {projectDir}. Example: java -jar C:/B4J/B4JBuilder.jar {project}"
+          "description": "Optional custom B4J build shell command. If empty, B4X++ uses B4JBuilder.exe. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}. Example: \"C:/Program Files/Anywhere Software/B4J/B4JBuilder.exe\" -Task=Build -Project={project} -BaseFolder={projectDir} -ShowWarnings=True"
+        },
+        "b4xpp.b4aBuildCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom B4A build shell command. If empty, B4X++ uses B4ABuilder.exe when found. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}."
+        },
+        "b4xpp.b4iBuildCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom B4i build shell command. B4X++ does not assume an official B4i CLI; this command is used as-is and its output is remapped. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}."
+        },
+        "b4xpp.b4j.builderPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to B4JBuilder.exe. If empty, B4X++ tries C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe and Program Files (x86)."
+        },
+        "b4xpp.b4a.builderPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to B4ABuilder.exe. If empty, B4X++ tries common B4A / Basic4android install folders."
+        },
+        "b4xpp.b4i.builderPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to a custom B4i command-line builder. Usually prefer b4xpp.b4iBuildCommand because B4i uses a Mac builder workflow."
+        },
+        "b4xpp.buildConfiguration": {
+          "type": "string",
+          "default": "Default",
+          "description": "B4X build configuration passed as -Configuration=... to B4JBuilder.exe / B4ABuilder.exe."
+        },
+        "b4xpp.buildTask": {
+          "type": "string",
+          "default": "Build",
+          "description": "B4X builder task passed as -Task=... . Default is Build."
+        },
+        "b4xpp.buildShowWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pass -ShowWarnings=True to B4JBuilder.exe / B4ABuilder.exe."
+        },
+        "b4xpp.buildUseBaseFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pass -BaseFolder=<project folder> to B4JBuilder.exe / B4ABuilder.exe. Disable if your builder version has issues with BaseFolder."
         },
         "b4xpp.writeLineSourceMap": {
           "type": "boolean",
@@ -171,7 +241,7 @@
         "b4xpp.enableSemanticDiagnostics": {
           "type": "boolean",
           "default": true,
-          "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, #Extends and CustomView color-property mistakes."
+          "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, Extends and CustomView color-property mistakes."
         },
         "b4xpp.validation.strict": {
           "type": "boolean",
@@ -195,7 +265,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4J internal library folders containing .xml files and .b4xlib packages."
+          "description": "B4J internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
         },
         "b4xpp.b4j.additionalLibraryDirs": {
           "type": "array",
@@ -203,7 +273,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4J additional library folders containing .xml files and .b4xlib packages."
+          "description": "B4J additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
         },
         "b4xpp.b4a.internalLibraryDirs": {
           "type": "array",
@@ -211,7 +281,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4A internal library folders containing .xml files and .b4xlib packages."
+          "description": "B4A internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
         },
         "b4xpp.b4a.additionalLibraryDirs": {
           "type": "array",
@@ -219,7 +289,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4A additional library folders containing .xml files and .b4xlib packages."
+          "description": "B4A additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
         },
         "b4xpp.b4i.internalLibraryDirs": {
           "type": "array",
@@ -227,7 +297,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4i internal library folders containing .xml files and .b4xlib packages."
+          "description": "B4i internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
         },
         "b4xpp.b4i.additionalLibraryDirs": {
           "type": "array",
@@ -235,10 +305,10 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4i additional library folders containing .xml files and .b4xlib packages."
+          "description": "B4i additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
         }
       }
     }
   },
-  "b4xppBuild": "settings-save-fix4"
+  "b4xppBuild": "v050-consolidated-release"
 }

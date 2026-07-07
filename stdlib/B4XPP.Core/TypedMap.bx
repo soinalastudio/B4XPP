@@ -1,0 +1,44 @@
+#B4XPPLib B4XPP.Core
+Class TypedMap(Of TKey, TValue)
+Sub Class_Globals
+    Private mMap As Map
+End Sub
+
+Public Sub Initialize
+    mMap.Initialize
+End Sub
+
+Public Sub Put(aKey As TKey, aValue As TValue)
+    mMap.Put(aKey, aValue)
+End Sub
+
+Public Sub Get(aKey As TKey) As TValue
+    Return mMap.Get(aKey)
+End Sub
+
+Public Sub GetDefault(aKey As TKey, aDefaultValue As TValue) As TValue
+    Return mMap.GetDefault(aKey, aDefaultValue)
+End Sub
+
+Public Sub ContainsKey(aKey As TKey) As Boolean
+    Return mMap.ContainsKey(aKey)
+End Sub
+
+Public Sub Remove(aKey As TKey) As TValue
+    Dim RemovedValue As TValue = mMap.Get(aKey)
+    mMap.Remove(aKey)
+    Return RemovedValue
+End Sub
+
+Public Sub Clear
+    mMap.Clear
+End Sub
+
+Public Sub Size As Int
+    Return mMap.Size
+End Sub
+
+Public Sub RawMap As Map
+    Return mMap
+End Sub
+End Class

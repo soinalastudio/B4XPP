@@ -1,8 +1,8 @@
-#Class Goblin Extends Enemy Final
+Class Goblin Extends Enemy Final
 
-#Constructor(Id As String, X As Int, Y As Int)
+Constructor(Id As String, X As Int, Y As Int)
     Super.Initialize(Id, "Goblin", X, Y, 12, 4, 5)
-#End Constructor
+End Constructor
 
 
 Override Sub Attack(Target As Object) As String
@@ -13,4 +13,4 @@ Override Sub WarCry As String
     Return getName & " sharpens a tiny blade."
 End Sub
 
-#End Class
+End Class

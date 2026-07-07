@@ -1,0 +1,21 @@
+#B4XPPLib B4XPP.Core
+StaticCode B4XPPAsync
+
+Public Sub Delay(Milliseconds As Int) As ResumableSub
+    Sleep(Milliseconds)
+    Return True
+End Sub
+
+Public Sub FromValue(Value As Object) As ResumableSub
+    Return Value
+End Sub
+
+Public Sub FromBoolean(Value As Boolean) As ResumableSub
+    Return Value
+End Sub
+
+Public Sub FromString(Value As String) As ResumableSub
+    Return Value
+End Sub
+
+End StaticCode

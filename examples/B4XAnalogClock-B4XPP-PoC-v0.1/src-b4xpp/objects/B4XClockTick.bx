@@ -1,18 +1,18 @@
-#Class B4XClockTick Extends B4XClockDrawableBase Final
+Class B4XClockTick Extends B4XClockDrawableBase Final
 
-#Property Index As Int = 0
-#Property InnerRatio As Float = 0.90
-#Property OuterRatio As Float = 0.96
-#Property TickWidth As Float = 1
+Property Index As Int = 0
+Property InnerRatio As Float = 0.90
+Property OuterRatio As Float = 0.96
+Property TickWidth As Float = 1
 
-#Constructor(TickIndex As Int)
+Constructor(TickIndex As Int)
     Super.Initialize
     mIndex = TickIndex
     If mIndex Mod 5 = 0 Then
         mInnerRatio = 0.86
         mTickWidth = 2dip
     End If
-#End Constructor
+End Constructor
 
 Override Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radius As Float)
     If mVisible = False Then Return
@@ -24,4 +24,4 @@ Override Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radiu
     Canvas.DrawLine(x1, y1, x2, y2, mColor, mTickWidth)
 End Sub
 
-#End Class
+End Class

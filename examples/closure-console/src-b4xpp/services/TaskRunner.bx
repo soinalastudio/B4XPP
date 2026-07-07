@@ -1,14 +1,14 @@
-#Class TaskRunner
+Class TaskRunner
 
 Sub Class_Globals
     Private mNames As List
     Private mActions As List
 End Sub
 
-#Constructor
+Constructor
     mNames.Initialize
     mActions.Initialize
-#End Constructor
+End Constructor
 
 Public Sub Add(Name As String, Action As Closure)
     mNames.Add(Name)
@@ -22,4 +22,4 @@ Public Sub RunAll(Value As Int)
     Next
 End Sub
 
-#End Class
+End Class

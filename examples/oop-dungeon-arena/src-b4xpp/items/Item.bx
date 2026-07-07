@@ -1,11 +1,11 @@
-#Class Item Abstract Extends GameObject Implements ICollectible
+Class Item Abstract Extends GameObject Implements ICollectible
 
-#Property Picked As Boolean = False
+Property Picked As Boolean = False
 
-#Constructor(Id As String, Name As String, X As Int, Y As Int)
+Constructor(Id As String, Name As String, X As Int, Y As Int)
     Super.Initialize(Id, Name, X, Y)
     setPicked(False)
-#End Constructor
+End Constructor
 
 Public Sub IsPicked As Boolean
     Return getPicked
@@ -20,4 +20,4 @@ Override Sub Render As String
     Return "item:" & Super.Render & " picked=" & getPicked
 End Sub
 
-#End Class
+End Class

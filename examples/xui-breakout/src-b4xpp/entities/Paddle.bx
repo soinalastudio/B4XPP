@@ -1,12 +1,12 @@
-#Class Paddle Extends GameEntity Final
+Class Paddle Extends GameEntity Final
 
-#Property Speed As Float = 720
+Property Speed As Float = 720
 
-#Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)
+Constructor(aX As Float, aY As Float, aWidth As Float, aHeight As Float, aColor As Int)
     ' Paddle is a specialized rectangle controlled by the mouse.
     Super.Initialize(aX, aY, aWidth, aHeight, aColor)
     Speed = 720
-#End Constructor
+End Constructor
 
 Public Sub MoveCenter(aTargetCenterX As Float, aBoundsWidth As Float)
     ' Keeps the paddle centered under the mouse while staying inside the arena.
@@ -26,4 +26,4 @@ Override Sub Render(aCvs As B4XCanvas)
     aCvs.DrawRect(EntityRect, getColor, True, 0)
 End Sub
 
-#End Class
+End Class

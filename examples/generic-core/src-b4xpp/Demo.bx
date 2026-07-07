@@ -1,0 +1,21 @@
+#Project B4J-NonUI B4XPPGenericCoreDemo
+#Package b4xpp.demo.generics
+#ProjectDir b4x-ide-projects/B4XPPGenericCoreDemo-b4j-nonui
+#B4XPPLibDependsOn B4XPP.Core
+#MainModule Main
+
+Sub AppStart (Args() As String)
+    Dim result As Result(Of String)
+    result.InitializeSuccess("B4X++ generics")
+
+    Dim names As TypedList(Of String)
+    names.Add(result.Value)
+    names.Add("source-generated")
+
+    Dim scores As TypedMap(Of String, Int)
+    scores.Put("generics", 1)
+    scores.Put("b4xpplib", 2)
+
+    Log(names.Get(0))
+    Log(scores.Get("b4xpplib"))
+End Sub

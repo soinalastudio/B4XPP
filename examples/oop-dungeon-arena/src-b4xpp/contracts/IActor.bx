@@ -1,4 +1,4 @@
-#Interface IActor
+Interface IActor
 Sub TakeTurn(World As Object)
 Sub IsAlive As Boolean
 Sub Team As String
@@ -9,4 +9,4 @@ Sub SetPosX(Value As Int)
 Sub GetPosY As Int
 Sub SetPosY(Value As Int)
 Sub Render As String
-#End Interface
+End Interface

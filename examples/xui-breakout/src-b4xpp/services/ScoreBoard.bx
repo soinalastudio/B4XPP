@@ -1,9 +1,9 @@
-#Class ScoreBoard Final
+Class ScoreBoard Final
 
-#Property Score As Int = 0
-#Property Lives As Int = 3
-#Property Running As Boolean = False
-#Property Message As String = "Move the mouse to control the paddle. Click to launch."
+Property Score As Int = 0
+Property Lives As Int = 3
+Property Running As Boolean = False
+Property Message As String = "Move the mouse to control the paddle. Click to launch."
 
 Sub Class_Globals
     Private xui As XUI
@@ -50,4 +50,4 @@ Public Sub Render(aCvs As B4XCanvas, aGameWidth As Float)
     End If
 End Sub
 
-#End Class
+End Class

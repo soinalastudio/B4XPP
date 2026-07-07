@@ -5,14 +5,14 @@ This example is a small turn-based console game designed to stress-test and show
 It demonstrates:
 
 - multiple classes split across folders;
-- `#Interface` contracts;
+- `Interface` contracts;
 - abstract base classes;
-- inheritance with `#Class ... Extends ...`;
+- inheritance with `Class ... Extends ...`;
 - `Virtual Sub`, `Override Sub`, `Protected Sub` and `Super.Method`;
-- `#Property` with generated getters/setters;
+- `Property` with generated getters/setters;
 - custom property accessors with validation;
 - `Poly` interface dispatch;
-- a `#StaticCode` helper module;
+- a `StaticCode` helper module;
 - a generated B4J Non-UI project via `#Project`;
 - `.b4xlib` packaging directives.
 

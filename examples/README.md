@@ -5,7 +5,7 @@ This folder contains five ready-to-copy B4X++ examples:
 - `basic-animal`: a simple OOP example with `Animal`, `Dog`, `Cat` and `Bird`.
 - `language-showcase`: a broader sample demonstrating most B4X++ directives and keywords.
 - `closure-console`: a B4J Non-UI example showing `Closure` / anonymous `Sub`, captured local variables and passing closures to another class.
-- `oop-dungeon-arena`: a small turn-based game using heavier OOP patterns: interfaces, inheritance, abstract classes, overrides, `Super`, custom property accessors, `Poly` dispatch and a `#StaticCode` helper module.
+- `oop-dungeon-arena`: a small turn-based game using heavier OOP patterns: interfaces, inheritance, abstract classes, overrides, `Super`, custom property accessors, `Poly` dispatch and a `StaticCode` helper module.
 - `xui-breakout`: a B4J UI + XUI Breakout game using `B4XCanvas`, a `Timer`, mouse input, entities, services, collisions and rendering.
 
 Open one example folder in VS Code, then run:

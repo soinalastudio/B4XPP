@@ -1,0 +1,37 @@
+#B4XPPLib B4XPP.Core
+Class Optional(Of T)
+Sub Class_Globals
+    Private mHasValue As Boolean
+    Private mValue As T
+End Sub
+
+Public Sub Initialize
+    mHasValue = False
+End Sub
+
+Public Sub InitializeEmpty
+    mHasValue = False
+End Sub
+
+Public Sub InitializeValue(aValue As T)
+    mHasValue = True
+    mValue = aValue
+End Sub
+
+Public Sub HasValue As Boolean
+    Return mHasValue
+End Sub
+
+Public Sub Value As T
+    Return mValue
+End Sub
+
+Public Sub GetOrDefault(aDefaultValue As T) As T
+    If mHasValue Then Return mValue
+    Return aDefaultValue
+End Sub
+
+Public Sub Clear
+    mHasValue = False
+End Sub
+End Class

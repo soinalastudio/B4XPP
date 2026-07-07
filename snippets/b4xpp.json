@@ -53,57 +53,57 @@
   "B4X++ Interface": {
     "prefix": "interface",
     "body": [
-      "#Interface ${1:IMyContract}",
+      "Interface ${1:IMyContract}",
       "Sub ${2:DoWork}(${3})${4: As Object}",
-      "#End Interface"
+      "End Interface"
     ],
     "description": "Declare a B4X++ interface contract"
   },
   "B4X++ Class": {
     "prefix": "class",
     "body": [
-      "#Class ${1:MyClass}",
+      "Class ${1:MyClass}",
       "",
-      "#Property ${2:Name} As ${3:String}",
+      "Property ${2:Name} As ${3:String}",
       "",
-      "#Constructor(a${2:Name} As ${3:String})",
+      "Constructor(a${2:Name} As ${3:String})",
       "\t' Property assignment sugar generates set${2:Name}(a${2:Name}).",
       "\t${2:Name} = a${2:Name}",
-      "#End Constructor",
+      "End Constructor",
       "",
-      "#End Class"
+      "End Class"
     ],
     "description": "Create a B4X++ class with safe aName parameter and property assignment sugar"
   },
   "B4X++ Class Extends": {
     "prefix": "extends",
     "body": [
-      "#Class ${1:ChildClass} Extends ${2:BaseClass}",
+      "Class ${1:ChildClass} Extends ${2:BaseClass}",
       "",
-      "#Constructor(${3})",
+      "Constructor(${3})",
       "\tSuper.Initialize(${4})",
-      "#End Constructor",
+      "End Constructor",
       "",
       "Override Sub ${5:MethodName}(${6})${7: As String}",
       "\t${8:' TODO}",
       "End Sub",
       "",
-      "#End Class"
+      "End Class"
     ],
-    "description": "Create a class with #Extends"
+    "description": "Create a class with Extends"
   },
   "B4X++ Class Implements": {
     "prefix": "implements",
     "body": [
-      "#Class ${1:MyClass} Implements ${2:IMyContract}",
+      "Class ${1:MyClass} Implements ${2:IMyContract}",
       "",
-      "#Constructor(${3})",
+      "Constructor(${3})",
       "\t${4:' TODO}",
-      "#End Constructor",
+      "End Constructor",
       "",
-      "#End Class"
+      "End Class"
     ],
-    "description": "Create a class with #Implements"
+    "description": "Create a class with Implements"
   },
   "B4X++ MainModule": {
     "prefix": "main",
@@ -140,30 +140,30 @@
   "B4X++ Property": {
     "prefix": "property",
     "body": [
-      "#Property ${1:Name} As ${2:String}"
+      "Property ${1:Name} As ${2:String}"
     ],
     "description": "Generate a B4X get/set property"
   },
   "B4X++ ReadOnly Property": {
     "prefix": "property-ro",
     "body": [
-      "#Property ReadOnly ${1:Name} As ${2:String}"
+      "Property ReadOnly ${1:Name} As ${2:String}"
     ],
     "description": "Generate a B4X getter-only property"
   },
   "B4X++ WriteOnly Property": {
     "prefix": "property-wo",
     "body": [
-      "#Property WriteOnly ${1:Name} As ${2:String}"
+      "Property WriteOnly ${1:Name} As ${2:String}"
     ],
     "description": "Generate a B4X setter-only property"
   },
   "B4X++ Constructor": {
     "prefix": "constructor",
     "body": [
-      "#Constructor(${1})",
+      "Constructor(${1})",
       "\t${2:' TODO}",
-      "#End Constructor"
+      "End Constructor"
     ],
     "description": "Generate Public Sub Initialize(...)"
   },
@@ -223,6 +223,19 @@
     ],
     "description": "B4X library packaging directives"
   },
+  "B4X++ B4XPPLib": {
+    "prefix": "b4xpplib",
+    "body": [
+      "#B4XPPLib ${1:MySourcePackage}",
+      "#B4XPPLibVersion ${2:1.00}",
+      "#B4XPPLibAuthor ${3:Your Name}",
+      "#B4XPPLibDir b4xpp-libs",
+      "#B4XPPLibSupportedPlatforms B4A, B4J, B4i",
+      "${4:#B4XPPLibDependsOn SharedModels}",
+      ""
+    ],
+    "description": "B4X++ source package (.b4xpplib) directives"
+  },
   "B4X++ Full Header": {
     "prefix": "b4xpp-header",
     "body": [
@@ -243,27 +256,27 @@
   "B4X++ Property with Default": {
     "prefix": "property-default",
     "body": [
-      "#Property ${1:Name} As ${2:String} = ${3:\"Default\"}"
+      "Property ${1:Name} As ${2:String} = ${3:\"Default\"}"
     ],
     "description": "Generate a B4X get/set property with an initial value"
   },
   "B4X++ ReadOnly Property with Default": {
     "prefix": "property-ro-default",
     "body": [
-      "#Property ReadOnly ${1:Name} As ${2:String} = ${3:\"Default\"}"
+      "Property ReadOnly ${1:Name} As ${2:String} = ${3:\"Default\"}"
     ],
     "description": "Generate a getter-only property with an initial value"
   },
   "staticcode": {
     "prefix": "staticcode",
     "body": [
-      "#StaticCode ${1:ModuleName}",
+      "StaticCode ${1:ModuleName}",
       "",
       "Sub Process_Globals",
       "\t$0",
       "End Sub",
       "",
-      "#End StaticCode"
+      "End StaticCode"
     ],
     "description": "B4X++ static code module"
   },
@@ -288,7 +301,7 @@
   "custom-property": {
     "prefix": "property-custom",
     "body": [
-      "#Property ${1|Public,Protected,Private|} ${2:Name} As ${3:String} = ${4:\"\"}",
+      "Property ${1|Public,Protected,Private|} ${2:Name} As ${3:String} = ${4:\"\"}",
       "",
       "${1} Get ${2} As ${3}",
       "\tReturn m${2}",
@@ -299,14 +312,14 @@
       "\t${6:Refresh}",
       "End Set"
     ],
-    "description": "Create a #Property with custom getter and setter"
+    "description": "Create a Property with custom getter and setter"
   },
   "B4X++ Constructor Overload": {
     "prefix": "constructor-overload",
     "body": [
-      "#Constructor(${1:Name As String})",
+      "Constructor(${1:Name As String})",
       "\t${2:' TODO}",
-      "#End Constructor"
+      "End Constructor"
     ],
     "description": "Declare a B4X++ constructor overload. Multiple constructors generate Initialize / Initialize2 / Initialize3 in B4X."
   },
@@ -339,5 +352,55 @@
       "Dim ${1:handler} As Closure"
     ],
     "description": "Declare a B4X++ closure variable. Alias As Sub is still accepted, but Closure is the preferred source type."
+  },
+  "B4X++ Generic Class": {
+    "prefix": "generic-class",
+    "body": [
+      "Class ${1:Box}(Of ${2:T})",
+      "Sub Class_Globals",
+      "\tPrivate mValue As ${2:T}",
+      "End Sub",
+      "",
+      "Public Sub Initialize(Value As ${2:T})",
+      "\tmValue = Value",
+      "End Sub",
+      "",
+      "Public Sub GetValue As ${2:T}",
+      "\tReturn mValue",
+      "End Sub",
+      "End Class"
+    ],
+    "description": "Create a B4X++ generic class. B4X++ generates specialized .bas classes only for used type arguments."
+  },
+  "B4X++ Generic Usage": {
+    "prefix": "generic-use",
+    "body": [
+      "Dim ${1:item} As ${2:Box}(Of ${3:String})"
+    ],
+    "description": "Use a B4X++ generic type. Example: Box(Of String) -> Box__String.bas."
+  },
+  "B4X++ Core Generics Library": {
+    "prefix": "b4xpp-core",
+    "body": [
+      "#B4XPPLibDependsOn B4XPP.Core"
+    ],
+    "description": "Depend on the bundled B4XPP.Core .b4xpplib generic utilities."
+  },
+  "B4X++ Async Sub": {
+    "prefix": "async-sub",
+    "body": [
+      "Public Async Sub ${1:LoadData}(${2}) As ${3:Object}",
+      "\tDim ${4:result} As ${3:Object} = Await ${5:SomeAsyncCall}(${6})",
+      "\tReturn ${4:result}",
+      "End Sub"
+    ],
+    "description": "B4X++ Async Sub generated as a native B4X ResumableSub"
+  },
+  "B4X++ Await assignment": {
+    "prefix": "await",
+    "body": [
+      "Dim ${1:result} As ${2:Object} = Await ${3:SomeAsyncCall}(${4})"
+    ],
+    "description": "Await a ResumableSub / Async Sub result"
   }
 }

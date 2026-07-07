@@ -1,0 +1,14 @@
+#B4XPPLib B4XPP.Core
+Class Task(Of T)
+Sub Class_Globals
+    Private mResumable As ResumableSub
+End Sub
+
+Public Sub Initialize(aResumable As ResumableSub)
+    mResumable = aResumable
+End Sub
+
+Public Sub Awaitable As ResumableSub
+    Return mResumable
+End Sub
+End Class

@@ -1,4 +1,4 @@
-#StaticCode B4XClockMath
+StaticCode B4XClockMath
 
 Sub Process_Globals
 End Sub
@@ -30,4 +30,4 @@ Public Sub Clamp(Value As Float, Minimum As Float, Maximum As Float) As Float
     Return Value
 End Sub
 
-#End StaticCode
+End StaticCode

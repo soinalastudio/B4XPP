@@ -1,0 +1,44 @@
+#B4XPPLib B4XPP.Net
+StaticCode B4XPPHttp
+
+Public Sub Get(Url As String) As ResumableSub
+    Dim j As HttpJob
+    j.Initialize("", Me)
+    j.Download(Url)
+    Wait For (j) JobDone(j As HttpJob)
+
+    Dim response As B4XPPHttpResponse
+    response.Initialize(j.Success, SafeGetString(j), j.ErrorMessage, SafeStatusCode(j))
+    j.Release
+    Return response
+End Sub
+
+Public Sub PostString(Url As String, Body As String) As ResumableSub
+    Dim j As HttpJob
+    j.Initialize("", Me)
+    j.PostString(Url, Body)
+    Wait For (j) JobDone(j As HttpJob)
+
+    Dim response As B4XPPHttpResponse
+    response.Initialize(j.Success, SafeGetString(j), j.ErrorMessage, SafeStatusCode(j))
+    j.Release
+    Return response
+End Sub
+
+Private Sub SafeGetString(j As HttpJob) As String
+    Try
+        If j.Success Then Return j.GetString
+    Catch
+    End Try
+    Return ""
+End Sub
+
+Private Sub SafeStatusCode(j As HttpJob) As Int
+    Try
+        If j.Response <> Null Then Return j.Response.StatusCode
+    Catch
+    End Try
+    Return 0
+End Sub
+
+End StaticCode

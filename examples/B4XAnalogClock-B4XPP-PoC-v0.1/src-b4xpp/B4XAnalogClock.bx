@@ -1,4 +1,4 @@
-#Class B4XAnalogClock Extends B4XClockViewBase Final
+Class B4XAnalogClock Extends B4XClockViewBase Final
 
 Sub Class_Globals
     Private HourHand As B4XClockHourHand
@@ -99,4 +99,4 @@ Private Sub DrawHands(CenterX As Float, CenterY As Float, Radius As Float)
     End If
 End Sub
 
-#End Class
+End Class

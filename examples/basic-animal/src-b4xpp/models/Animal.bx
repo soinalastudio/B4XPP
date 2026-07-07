@@ -1,10 +1,10 @@
-#Class Animal Abstract Implements IAnimal
+Class Animal Abstract Implements IAnimal
 
-#Property ReadOnly Name As String = "Unknown"
+Property ReadOnly Name As String = "Unknown"
 
-#Constructor(Name As String)
+Constructor(Name As String)
     mName = Name
-#End Constructor
+End Constructor
 
 Virtual Sub Speak As String
     Return "I am " & mName
@@ -18,4 +18,4 @@ Protected Sub FormatDistance(Distance As Int) As String
     Return Distance & " m"
 End Sub
 
-#End Class
+End Class

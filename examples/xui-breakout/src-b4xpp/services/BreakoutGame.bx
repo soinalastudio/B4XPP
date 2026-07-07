@@ -1,7 +1,7 @@
-#Class BreakoutGame Final
+Class BreakoutGame Final
 
-#Property GameWidth As Float = 640
-#Property GameHeight As Float = 480
+Property GameWidth As Float = 640
+Property GameHeight As Float = 480
 
 Sub Class_Globals
     Private xui As XUI
@@ -117,4 +117,4 @@ Private Sub GameSurface_MousePressed(aEventData As MouseEvent)
     StartPlay
 End Sub
 
-#End Class
+End Class

@@ -1,17 +1,17 @@
-#Class Actor Abstract Extends GameObject Implements IActor
+Class Actor Abstract Extends GameObject Implements IActor
 
-#Property Health As Int = 10
-#Property MaxHealth As Int = 10
-#Property AttackPower As Int = 1
-#Property Speed As Int = 1
+Property Health As Int = 10
+Property MaxHealth As Int = 10
+Property AttackPower As Int = 1
+Property Speed As Int = 1
 
-#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int)
+Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int)
     Super.Initialize(Id, Name, X, Y)
     setMaxHealth(MaxHealth)
     setHealth(MaxHealth)
     setAttackPower(AttackPower)
     setSpeed(1)
-#End Constructor
+End Constructor
 
 Public Sub IsAlive As Boolean
     Return getHealth > 0
@@ -74,4 +74,4 @@ Override Sub Render As String
     Return Super.Render & " hp=" & getHealth & "/" & getMaxHealth & " atk=" & getAttackPower
 End Sub
 
-#End Class
+End Class

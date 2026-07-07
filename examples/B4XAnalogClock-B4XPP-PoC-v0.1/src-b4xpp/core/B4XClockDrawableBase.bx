@@ -1,7 +1,7 @@
-#Class B4XClockDrawableBase Abstract
+Class B4XClockDrawableBase Abstract
 
-#Property Visible As Boolean = True
-#Property Color As Int = 0xFF000000
+Property Visible As Boolean = True
+Property Color As Int = 0xFF000000
 
 Sub Class_Globals
 End Sub
@@ -12,4 +12,4 @@ End Sub
 Virtual Sub Draw(Canvas As B4XCanvas, CenterX As Float, CenterY As Float, Radius As Float)
 End Sub
 
-#End Class
+End Class

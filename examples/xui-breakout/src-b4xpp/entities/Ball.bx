@@ -1,16 +1,16 @@
-#Class Ball Extends GameEntity Final
+Class Ball Extends GameEntity Final
 
-#Property VelocityX As Float = 190
-#Property VelocityY As Float = -230
-#Property Radius As Float = 7
+Property VelocityX As Float = 190
+Property VelocityY As Float = -230
+Property Radius As Float = 7
 
-#Constructor(aX As Float, aY As Float, aRadius As Float, aColor As Int)
+Constructor(aX As Float, aY As Float, aRadius As Float, aColor As Int)
     ' The ball is stored as a rectangle but rendered as a circle.
     Super.Initialize(aX - aRadius, aY - aRadius, aRadius * 2, aRadius * 2, aColor)
     Radius = aRadius
     VelocityX = 190
     VelocityY = -230
-#End Constructor
+End Constructor
 
 Public Sub ResetAt(aBallCenterX As Float, aBallCenterY As Float)
     ' Places the ball above the paddle before launch / relaunch.
@@ -61,4 +61,4 @@ Override Sub Render(aCvs As B4XCanvas)
     aCvs.DrawCircle(CenterX, CenterY, getRadius, getColor, True, 0)
 End Sub
 
-#End Class
+End Class

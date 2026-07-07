@@ -1,11 +1,11 @@
-#Class Enemy Abstract Extends Actor
+Class Enemy Abstract Extends Actor
 
-#Property AggroRange As Int = 3
+Property AggroRange As Int = 3
 
-#Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int, AggroRange As Int)
+Constructor(Id As String, Name As String, X As Int, Y As Int, MaxHealth As Int, AttackPower As Int, AggroRange As Int)
     Super.Initialize(Id, Name, X, Y, MaxHealth, AttackPower)
     setAggroRange(AggroRange)
-#End Constructor
+End Constructor
 
 Override Sub Team As String
     Return "enemy"
@@ -39,4 +39,4 @@ Override Sub Render As String
     Return Super.Render & " aggro=" & getAggroRange
 End Sub
 
-#End Class
+End Class

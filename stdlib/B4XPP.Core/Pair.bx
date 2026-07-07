@@ -1,0 +1,23 @@
+#B4XPPLib B4XPP.Core
+Class Pair(Of TFirst, TSecond)
+Sub Class_Globals
+    Private mFirst As TFirst
+    Private mSecond As TSecond
+End Sub
+
+Public Sub Initialize
+End Sub
+
+Public Sub InitializeValues(aFirst As TFirst, aSecond As TSecond)
+    mFirst = aFirst
+    mSecond = aSecond
+End Sub
+
+Public Sub First As TFirst
+    Return mFirst
+End Sub
+
+Public Sub Second As TSecond
+    Return mSecond
+End Sub
+End Class

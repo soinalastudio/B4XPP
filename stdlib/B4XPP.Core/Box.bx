@@ -1,0 +1,21 @@
+#B4XPPLib B4XPP.Core
+Class Box(Of T)
+Sub Class_Globals
+    Private mValue As T
+End Sub
+
+Public Sub Initialize
+End Sub
+
+Public Sub InitializeValue(aValue As T)
+    mValue = aValue
+End Sub
+
+Public Sub GetValue As T
+    Return mValue
+End Sub
+
+Public Sub SetValue(aValue As T)
+    mValue = aValue
+End Sub
+End Class

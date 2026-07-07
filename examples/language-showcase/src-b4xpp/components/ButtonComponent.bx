@@ -1,11 +1,11 @@
-#Class ButtonComponent Extends BaseComponent Final
+Class ButtonComponent Extends BaseComponent Final
 
-#Property Enabled As Boolean = True
+Property Enabled As Boolean = True
 
-#Constructor(Id As String, Title As String)
+Constructor(Id As String, Title As String)
     Super.Initialize(Id, Title)
     mEnabled = True
-#End Constructor
+End Constructor
 
 Override Sub ComponentType As String
     Return "button"
@@ -15,4 +15,4 @@ Override Sub Render(Theme As String, Scale As Int, Debug As Boolean) As String
     Return BuildRenderLine(This.ComponentType, Theme, Scale, Debug) & " enabled=" & mEnabled
 End Sub
 
-#End Class
+End Class

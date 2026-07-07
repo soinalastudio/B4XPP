@@ -12,7 +12,7 @@ It demonstrates how B4X++ can structure a real XUI game with small focused class
 - Mouse input with a generated panel event.
 - OOP entities: `GameEntity`, `Paddle`, `Ball`, `Brick`.
 - Services: `BreakoutGame`, `BrickGrid`, `ScoreBoard`.
-- Inheritance, `Override`, `Super.Initialize`, readable property assignment (`X = aX`) and a `#StaticCode` helper.
+- Inheritance, `Override`, `Super.Initialize`, readable property assignment (`X = aX`) and a `StaticCode` helper.
 
 ## Run it
 

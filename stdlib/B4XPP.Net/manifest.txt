@@ -1,0 +1,8 @@
+Name=B4XPP.Net
+Version=0.4.5
+Author=Soinala Studio
+B4XPPLibSupportedPlatforms=B4J, B4A, B4i
+B4XPPLibDependsOn=B4XPP.Core
+ProjectB4JDependsOn=jOkHttpUtils2
+ProjectB4ADependsOn=OkHttpUtils2
+ProjectB4iDependsOn=iHttpUtils2

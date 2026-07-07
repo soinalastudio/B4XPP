@@ -1,0 +1,4 @@
+Name=B4XPP.Core
+Version=0.4.5
+Author=Soinala Studio
+B4XPPLibSupportedPlatforms=B4J, B4A, B4i
