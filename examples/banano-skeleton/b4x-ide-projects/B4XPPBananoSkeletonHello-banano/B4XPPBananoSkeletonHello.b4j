@@ -1,0 +1,67 @@
+AppType=JavaFX
+Build1=Default,b4xpp.examples.banano
+Group=Default Group
+Library1=jcore
+Library2=jfx
+Library3=BANano
+Library4=BANanoSkeleton
+NumberOfFiles=0
+NumberOfLibraries=4
+NumberOfModules=0
+Version=10.0
+@EndOfDesignText@
+#Region Project Attributes
+    #MainFormWidth: 320
+    #MainFormHeight: 240
+    #MergeLibraries: True
+#End Region
+
+Sub Process_Globals
+    Private BANano As BANano 'ignore
+End Sub
+
+Sub AppStart (Form1 As Form, Args() As String)
+    BANano.Initialize("BANano", "B4XPPBananoSkeletonHello", 1)
+    BANano.Header.Title = "B4X++ BANanoSkeleton"
+    BANano.JAVASCRIPT_NAME = "app.js"
+    BANano.TranspilerOptions.MergeAllCSSFiles = True
+    BANano.TranspilerOptions.MergeAllJavascriptFiles = True
+    BANano.TranspilerOptions.RemoveDeadCode = False
+    BANano.TranspilerOptions.ShowWarningDeadCode = True
+
+    ' BANanoSkeleton theme / assets
+    SKTools.WriteTheme
+
+    ' BANano transpiles the B4J project into Objects/B4XPPBananoSkeletonHello/index.html + app.js.
+    BANano.Build(File.DirApp)
+
+    #If Release
+    ExitApplication
+    #End If
+End Sub
+
+Sub BANano_Ready()
+    Dim body As BANanoElement
+    body.Initialize("#body")
+    body.Append($"<div class="container" style="margin-top: 32px;">
+<h1>B4X++ + BANanoSkeleton</h1>
+<p>This page was generated from a .bx source, compiled as B4J, then transpiled by BANano to HTML/CSS/JS.</p>
+<button class="button-primary">Hello BANano</button>
+</div>"$)
+
+    ' Native BANano.Await must stay untouched by B4X++ Async/Await transformation.
+    Dim indexTextProm As BANanoPromise = BANano.GetFileAsText("./index.html", Null, "UTF-8")
+    Dim indexText As String = BANano.Await(indexTextProm)
+    Log("Loaded index.html chars: " & indexText.Length)
+End Sub
+
+#If CSS
+body {
+    background: #f6f8fb;
+}
+#End If
+
+'Return true to allow the default exceptions handler to handle the uncaught exception.
+Sub Application_Error (Error As Exception, StackTrace As String) As Boolean
+    Return True
+End Sub

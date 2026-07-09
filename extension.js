@@ -5,12 +5,42 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 const crypto = require('crypto');
+const http = require('http');
+const { URL } = require('url');
 const { transpileText, transpileFiles, B4XPP_GENERATOR_VERSION, clearB4XLibraryIndexCache, parseB4XLibraryXml, parseB4XLibFile, parseB4XPPLibFile, parseB4XIdeProjectHeader, buildB4XLibraryIndex } = require('./lib/transpiler');
 
 let diagnosticCollection;
 let b4xppOutputChannel;
+let bananoStaticServer = null;
+let bananoStaticServerInfo = null;
+let b4xppExtensionContext = null;
+
+const B4XPP_LANGUAGE = 'b4xpp';
+const B4X_NATIVE_LANGUAGE = 'b4x';
+const B4X_DOCUMENT_SELECTORS = [{ language: B4XPP_LANGUAGE }, { language: B4X_NATIVE_LANGUAGE }];
+
+function isB4XLikeDocument(document) {
+  return !!document && (document.languageId === B4XPP_LANGUAGE || document.languageId === B4X_NATIVE_LANGUAGE);
+}
+
+function isB4XPPDocument(document) {
+  return !!document && document.languageId === B4XPP_LANGUAGE;
+}
+
+function isNativeB4XDocument(document) {
+  return !!document && document.languageId === B4X_NATIVE_LANGUAGE;
+}
+
+function isNativeB4XCodeFile(file) {
+  return /\.bas$/i.test(String(file || ''));
+}
+
+function isNativeB4XProjectFile(file) {
+  return /\.(b4j|b4a|b4i)$/i.test(String(file || ''));
+}
 
 function activate(context) {
+  b4xppExtensionContext = context;
   diagnosticCollection = vscode.languages.createDiagnosticCollection('b4xpp');
   b4xppOutputChannel = vscode.window.createOutputChannel('B4X++');
   context.subscriptions.push(diagnosticCollection);
@@ -21,6 +51,7 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.showGeneratedFolder', showGeneratedFolderCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.createIdeProject', createIdeProjectCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.syncDirectiveProject', syncDirectiveProjectCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.syncProject', syncDirectiveProjectCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4XLib', buildB4XLibCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4XPPLib', buildB4XPPLibCommand));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.remapB4XErrors', remapB4XErrorsCommand));
@@ -30,38 +61,94 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildB4iWithRemap', () => buildNativeB4XWithRemapCommand('b4i')));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.buildCurrentPlatformWithRemap', () => buildNativeB4XWithRemapCommand('auto')));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.refreshIntelliSense', refreshIntelliSenseCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.configureB4XPPSettings', () => configureB4XPPSettingsCommand(context)));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.configureProjectSettings', () => configureProjectSettingsCommand(context)));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.serveBananoOutput', serveBananoOutputCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.runBananoJar', runBananoJarCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('b4xpp.forceB4XLanguage', forceCurrentFileB4XLanguageCommand));
+
+  try {
+
+  // Native B4X files (.bas/.b4j/.b4a/.b4i) are often claimed by generic
+  // Visual Basic / plain-text associations.  Force the B4X language id so
+  // colorization, Go to Definition and IntelliSense are available when merely
+  // browsing native IDE projects.
+  for (const doc of vscode.workspace.textDocuments || []) ensureNativeB4XLanguage(doc);
+  context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((doc) => ensureNativeB4XLanguage(doc)));
 
   const navigationProvider = new B4XPPSymbolNavigationProvider();
-  context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, navigationProvider));
-  context.subscriptions.push(vscode.languages.registerDocumentLinkProvider({ language: 'b4xpp' }, navigationProvider));
+  context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: B4XPP_LANGUAGE }, navigationProvider));
+  context.subscriptions.push(vscode.languages.registerDocumentLinkProvider({ language: B4XPP_LANGUAGE }, navigationProvider));
+
+  const nativeNavigationProvider = new B4XNativeNavigationProvider();
+  context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: B4X_NATIVE_LANGUAGE }, nativeNavigationProvider));
+  context.subscriptions.push(vscode.languages.registerDocumentLinkProvider({ language: B4X_NATIVE_LANGUAGE }, nativeNavigationProvider));
+
+  const embeddedWebProvider = new B4XPPEmbeddedWebCompletionProvider();
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider(B4X_DOCUMENT_SELECTORS, embeddedWebProvider, '<', '/', ' ', '=', '"', ':', '.', '-', '#'));
 
   const intelliSenseProvider = new B4XPPV3IntelliSenseProvider();
-  context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ language: 'b4xpp' }, intelliSenseProvider, '.', ' ', '#', '=', '(', ',', '+', '-', '*', '/', '<', '>'));
-  context.subscriptions.push(vscode.languages.registerHoverProvider({ language: 'b4xpp' }, intelliSenseProvider));
-  context.subscriptions.push(vscode.languages.registerSignatureHelpProvider({ language: 'b4xpp' }, intelliSenseProvider, '(', ','));
-  context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider({ language: 'b4xpp' }, intelliSenseProvider));
+  context.subscriptions.push(vscode.languages.registerCompletionItemProvider(B4X_DOCUMENT_SELECTORS, intelliSenseProvider, '.', ' ', '#', '=', '(', ',', '+', '-', '*', '/', '<', '>'));
+  context.subscriptions.push(vscode.languages.registerHoverProvider(B4X_DOCUMENT_SELECTORS, intelliSenseProvider));
+  context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(B4X_DOCUMENT_SELECTORS, intelliSenseProvider, '(', ','));
+  context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider(B4X_DOCUMENT_SELECTORS, intelliSenseProvider));
   context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(new B4XPPV3WorkspaceSymbolProvider()));
-  context.subscriptions.push(vscode.languages.registerDefinitionProvider({ language: 'b4xpp' }, new B4XPPV32NavigationProvider()));
-  context.subscriptions.push(vscode.languages.registerReferenceProvider({ language: 'b4xpp' }, new B4XPPV32ReferenceProvider()));
-  context.subscriptions.push(vscode.languages.registerRenameProvider({ language: 'b4xpp' }, new B4XPPV32RenameProvider()));
-  context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: 'b4xpp' }, new B4XPPV32CodeActionProvider(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite] }));
+  context.subscriptions.push(vscode.languages.registerDefinitionProvider(B4X_DOCUMENT_SELECTORS, new B4XPPV32NavigationProvider()));
+  context.subscriptions.push(vscode.languages.registerReferenceProvider(B4X_DOCUMENT_SELECTORS, new B4XPPV32ReferenceProvider()));
+  context.subscriptions.push(vscode.languages.registerRenameProvider(B4X_DOCUMENT_SELECTORS, new B4XPPV32RenameProvider()));
+  context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: B4XPP_LANGUAGE }, new B4XPPV32CodeActionProvider(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite] }));
   context.subscriptions.push(vscode.commands.registerCommand('b4xpp.validateB4XLibCustomViews', validateB4XLibCustomViewsCommand));
 
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
-    if (doc.languageId === 'b4xpp') validateDocument(doc);
+    if (isB4XPPDocument(doc)) validateDocument(doc);
+    if (isB4XLikeDocument(doc)) { b4xppV3IndexCache = null; b4xppV3IndexCacheKey = ''; }
   }));
 
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
-    if (editor && editor.document.languageId === 'b4xpp') validateDocument(editor.document);
+    if (editor) ensureNativeB4XLanguage(editor.document);
+    if (editor && isB4XPPDocument(editor.document)) validateDocument(editor.document);
   }));
 
-  if (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.languageId === 'b4xpp') {
+  if (vscode.window.activeTextEditor && isB4XPPDocument(vscode.window.activeTextEditor.document)) {
     validateDocument(vscode.window.activeTextEditor.document);
+  }
+  } catch (err) {
+    const msg = err && (err.stack || err.message) ? (err.stack || err.message) : String(err);
+    try { b4xppOutputChannel.appendLine('B4X++ activation warning: ' + msg); } catch {}
+    try { vscode.window.showWarningMessage('B4X++ activated with limited features. Commands are available, but a provider failed to initialize. See the B4X++ output panel.'); } catch {}
   }
 }
 
-function deactivate() {}
+function deactivate() {
+  try { if (bananoStaticServer) bananoStaticServer.close(); } catch {}
+  bananoStaticServer = null;
+  bananoStaticServerInfo = null;
+}
+
+function nativeB4XExtensionOf(file) {
+  const m = String(file || '').match(/\.(bas|b4j|b4a|b4i)$/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function shouldForceNativeB4XLanguage(document) {
+  if (!document || !document.uri || document.uri.scheme !== 'file') return false;
+  return !!nativeB4XExtensionOf(document.uri.fsPath);
+}
+
+function ensureNativeB4XLanguage(document) {
+  if (!shouldForceNativeB4XLanguage(document)) return;
+  if (document.languageId === B4X_NATIVE_LANGUAGE) return;
+  // Do not steal .bx from B4X++ and avoid recursive errors when VS Code is
+  // still opening a document.
+  vscode.languages.setTextDocumentLanguage(document, B4X_NATIVE_LANGUAGE).then(() => {}, () => {});
+}
+
+async function forceCurrentFileB4XLanguageCommand() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return vscode.window.showWarningMessage('B4X++: no active editor.');
+  await vscode.languages.setTextDocumentLanguage(editor.document, B4X_NATIVE_LANGUAGE);
+  vscode.window.showInformationMessage('B4X++: current file language set to B4X.');
+}
 
 function getBundledB4XPPLibDirs() {
   const dirs = [];
@@ -82,6 +169,36 @@ function getWorkspaceFolder() {
   return folders[0] || null;
 }
 
+
+function b4xppGlobalStateSettingKey(key) {
+  return `settings.${key}`;
+}
+
+function getB4XPPGlobalStateSetting(key) {
+  try {
+    if (!b4xppExtensionContext || !b4xppExtensionContext.globalState) return undefined;
+    return b4xppExtensionContext.globalState.get(b4xppGlobalStateSettingKey(key));
+  } catch (_) {
+    return undefined;
+  }
+}
+
+async function setB4XPPGlobalStateSetting(key, value) {
+  if (!b4xppExtensionContext || !b4xppExtensionContext.globalState) return false;
+  await b4xppExtensionContext.globalState.update(b4xppGlobalStateSettingKey(key), value);
+  return true;
+}
+
+function hasExplicitVSCodeB4XPPSetting(inspected) {
+  if (!inspected || typeof inspected !== 'object') return false;
+  return inspected.globalValue !== undefined || inspected.workspaceValue !== undefined || inspected.workspaceFolderValue !== undefined || inspected.defaultLanguageValue !== undefined || inspected.globalLanguageValue !== undefined || inspected.workspaceLanguageValue !== undefined || inspected.workspaceFolderLanguageValue !== undefined;
+}
+
+function isUnregisteredConfigurationError(err) {
+  const msg = err && (err.message || String(err)) || '';
+  return /not a registered configuration|Unable to write to (?:User|Workspace).*Settings/i.test(msg);
+}
+
 function getConfig() {
   const folder = getWorkspaceFolder();
   const cfg = vscode.workspace.getConfiguration('b4xpp', folder ? folder.uri : undefined);
@@ -92,6 +209,15 @@ function getConfig() {
       const value = rawSettings[fullKey];
       if (Array.isArray(value)) return value.slice();
       return value;
+    }
+    let inspected = undefined;
+    try { inspected = cfg.inspect(key); } catch (_) {}
+    if (!hasExplicitVSCodeB4XPPSetting(inspected)) {
+      const stateValue = getB4XPPGlobalStateSetting(key);
+      if (stateValue !== undefined && stateValue !== null) {
+        if (Array.isArray(stateValue)) return stateValue.slice();
+        return stateValue;
+      }
     }
     const value = cfg.get(key);
     if (value === undefined || value === null) return fallback;
@@ -120,6 +246,12 @@ function getConfig() {
     buildTask: read('buildTask', 'Build') || 'Build',
     buildShowWarnings: read('buildShowWarnings', true) !== false,
     buildUseBaseFolder: read('buildUseBaseFolder', true) !== false,
+    bananoServerPort: Number(read('bananoServer.port', 8088)) || 8088,
+    bananoServerOpenBrowser: read('bananoServer.openBrowser', true) !== false,
+    bananoRunJarAfterBuild: read('banano.runJarAfterBuild', true) !== false,
+    bananoPromptServeAfterRun: read('banano.promptServeAfterRun', true) !== false,
+    bananoJavaPath: read('banano.javaPath', '') || '',
+    bananoJavaFxLibPath: read('banano.javaFxLibPath', '') || '',
     writeLineSourceMap: read('writeLineSourceMap', true) !== false,
     enableSemanticDiagnostics: read('enableSemanticDiagnostics', true) !== false,
     validationStrict: read('validation.strict', false) === true,
@@ -211,6 +343,8 @@ async function configureProjectSettingsCommand(context) {
         panel.webview.postMessage({ type: 'state', state: tempState });
       } else if (message.type === 'openSettingsJson') {
         await openWorkspaceSettingsJson(folder);
+      } else if (message.type === 'openB4XPPSettings') {
+        await vscode.commands.executeCommand('b4xpp.configureB4XPPSettings');
       }
     } catch (err) {
       const messageText = err && err.message ? err.message : String(err);
@@ -221,12 +355,264 @@ async function configureProjectSettingsCommand(context) {
 }
 
 
+const B4XPP_GLOBAL_SETTING_KEYS = [
+  'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath',
+  'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand',
+  'buildTask', 'buildShowWarnings', 'buildUseBaseFolder',
+  'banano.javaPath', 'banano.javaFxLibPath', 'banano.runJarAfterBuild', 'banano.promptServeAfterRun',
+  'bananoServer.port', 'bananoServer.openBrowser',
+  'validation.strict', 'enableSemanticDiagnostics',
+  'b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs',
+  'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs',
+  'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'
+];
+
+const B4XPP_GLOBAL_STRING_KEYS = [
+  'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath',
+  'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand',
+  'buildTask', 'banano.javaPath', 'banano.javaFxLibPath', 'bananoServer.port'
+];
+const B4XPP_GLOBAL_BOOL_KEYS = ['buildShowWarnings', 'buildUseBaseFolder', 'banano.runJarAfterBuild', 'banano.promptServeAfterRun', 'bananoServer.openBrowser', 'validation.strict', 'enableSemanticDiagnostics'];
+const B4XPP_GLOBAL_ARRAY_KEYS = ['b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs', 'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs', 'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'];
+
+function getB4XPPSettingDefault(key) {
+  const defaults = {
+    'buildTask': 'Build',
+    'buildShowWarnings': true,
+    'buildUseBaseFolder': true,
+    'banano.runJarAfterBuild': true,
+    'banano.promptServeAfterRun': true,
+    'bananoServer.port': 8088,
+    'bananoServer.openBrowser': true,
+    'validation.strict': false,
+    'enableSemanticDiagnostics': true
+  };
+  if (Object.prototype.hasOwnProperty.call(defaults, key)) return defaults[key];
+  if (B4XPP_GLOBAL_ARRAY_KEYS.includes(key)) return [];
+  return '';
+}
+
+async function configureB4XPPSettingsCommand(context) {
+  const folder = getWorkspaceFolder();
+  const panel = vscode.window.createWebviewPanel(
+    'b4xppGlobalSettings',
+    'B4X++ Settings',
+    vscode.ViewColumn.Active,
+    { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] }
+  );
+  const state = getB4XPPGlobalSettingsState(folder);
+  panel.webview.html = renderB4XPPGlobalSettingsWebview(panel.webview, context.extensionUri, state);
+  panel.webview.onDidReceiveMessage(async (message) => {
+    if (!message || typeof message !== 'object') return;
+    try {
+      if (message.type === 'ready') {
+        b4xppOutputChannel && b4xppOutputChannel.appendLine('B4X++ Settings WebView ready.');
+      } else if (message.type === 'browseDir') {
+        const folders = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: true, openLabel: 'Add folder' });
+        if (!folders || !folders.length) return;
+        panel.webview.postMessage({ type: 'dirPicked', key: message.key, values: folders.map(f => f.fsPath) });
+      } else if (message.type === 'browseFile') {
+        const files = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, openLabel: 'Select file' });
+        if (!files || !files.length) return;
+        panel.webview.postMessage({ type: 'filePicked', key: message.key, value: files[0].fsPath });
+      } else if (message.type === 'save') {
+        const info = await saveB4XPPGlobalSettings(message.values || {});
+        if (typeof clearB4XLibraryIndexCache === 'function') clearB4XLibraryIndexCache();
+        b4xppV3IndexCache = null; b4xppV3IndexCacheKey = ''; b4xppV315ExternalTypeCache = null; b4xppV315ExternalTypeCacheKey = '';
+        const nextState = getB4XPPGlobalSettingsState(folder);
+        vscode.window.showInformationMessage(`B4X++: global settings saved (${info.keyCount} key(s)).`);
+        panel.webview.postMessage({ type: 'saveResult', ok: true, settings: info });
+        panel.webview.postMessage({ type: 'state', state: nextState });
+        await vscode.commands.executeCommand('b4xpp.refreshIntelliSense');
+      } else if (message.type === 'reload') {
+        panel.webview.postMessage({ type: 'state', state: getB4XPPGlobalSettingsState(folder) });
+      } else if (message.type === 'openUserSettingsJson') {
+        await vscode.commands.executeCommand('workbench.action.openSettingsJson');
+      } else if (message.type === 'migrateWorkspaceSettings') {
+        const migrated = await migrateWorkspaceToolSettingsToGlobal(folder);
+        const nextState = getB4XPPGlobalSettingsState(folder);
+        panel.webview.postMessage({ type: 'state', state: nextState });
+        panel.webview.postMessage({ type: 'saveResult', ok: true, settings: migrated });
+        vscode.window.showInformationMessage(`B4X++: migrated ${migrated.keyCount || 0} workspace tool setting(s) to global settings.`);
+        await vscode.commands.executeCommand('b4xpp.refreshIntelliSense');
+      }
+    } catch (err) {
+      const messageText = err && err.message ? err.message : String(err);
+      try { panel.webview.postMessage({ type: 'saveResult', ok: false, error: messageText }); } catch {}
+      vscode.window.showErrorMessage(`B4X++ settings: ${messageText}`);
+    }
+  });
+}
+
+function getB4XPPGlobalSettingsState(folder) {
+  const cfg = vscode.workspace.getConfiguration('b4xpp');
+  const values = {};
+  const globalStateFallbackKeys = [];
+  for (const key of B4XPP_GLOBAL_SETTING_KEYS) {
+    const inspected = cfg.inspect(key);
+    let value;
+    if (inspected && Object.prototype.hasOwnProperty.call(inspected, 'globalValue') && inspected.globalValue !== undefined) {
+      value = inspected.globalValue;
+    } else {
+      const stateValue = getB4XPPGlobalStateSetting(key);
+      if (stateValue !== undefined) {
+        value = stateValue;
+        globalStateFallbackKeys.push(`b4xpp.${key}`);
+      } else {
+        value = getB4XPPSettingDefault(key);
+      }
+    }
+    if (Array.isArray(value)) value = value.slice();
+    values[key] = value;
+  }
+  values.globalStateFallbackKeys = globalStateFallbackKeys;
+  const workspaceOverrides = [];
+  if (folder) {
+    const raw = readWorkspaceB4XPPSettings(folder);
+    for (const key of B4XPP_GLOBAL_SETTING_KEYS) {
+      const full = `b4xpp.${key}`;
+      if (raw && Object.prototype.hasOwnProperty.call(raw, full)) workspaceOverrides.push(full);
+    }
+    values.workspaceName = folder.name;
+    values.workspacePath = folder.uri.fsPath;
+    values.workspaceSettingsJsonPath = path.join(folder.uri.fsPath, '.vscode', 'settings.json');
+  } else {
+    values.workspaceName = '';
+    values.workspacePath = '';
+    values.workspaceSettingsJsonPath = '';
+  }
+  values.workspaceOverrides = workspaceOverrides;
+  values.userSettingsTarget = 'VS Code User Settings';
+  return values;
+}
+
+function normalizeB4XPPGlobalSettingsValues(values) {
+  const out = {};
+  for (const key of B4XPP_GLOBAL_STRING_KEYS) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = String(values[key] == null ? '' : values[key]).trim();
+  for (const key of B4XPP_GLOBAL_BOOL_KEYS) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = values[key] === true || values[key] === 'true';
+  for (const key of B4XPP_GLOBAL_ARRAY_KEYS) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = normalizeDirectoryList(values[key]);
+  if (Object.prototype.hasOwnProperty.call(out, 'bananoServer.port')) out['bananoServer.port'] = Number(out['bananoServer.port']) || 8088;
+  return out;
+}
+
+async function saveB4XPPGlobalSettings(values) {
+  const normalized = normalizeB4XPPGlobalSettingsValues(values || {});
+  const cfg = vscode.workspace.getConfiguration('b4xpp');
+  let fallbackKeyCount = 0;
+  const fallbackKeys = [];
+  for (const [key, value] of Object.entries(normalized)) {
+    try {
+      await cfg.update(key, value, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      if (!isUnregisteredConfigurationError(err)) throw err;
+      await setB4XPPGlobalStateSetting(key, value);
+      fallbackKeyCount += 1;
+      fallbackKeys.push(`b4xpp.${key}`);
+      b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ settings: VS Code refused to write registered setting b4xpp.${key}; stored it in extension global state fallback. Reload VS Code after installing the latest VSIX to restore normal User Settings writes.`);
+    }
+  }
+  b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ global settings saved (${Object.keys(normalized).length} key(s), ${fallbackKeyCount} fallback key(s)).`);
+  return { target: fallbackKeyCount ? 'global+extensionStateFallback' : 'global', keyCount: Object.keys(normalized).length, fallbackKeyCount, fallbackKeys };
+}
+
+async function migrateWorkspaceToolSettingsToGlobal(folder) {
+  if (!folder) throw new Error('Open a workspace folder before migrating project-local tool settings.');
+  const settingsFile = path.join(folder.uri.fsPath, '.vscode', 'settings.json');
+  if (!fs.existsSync(settingsFile)) return { keyCount: 0, settingsFile };
+  let settings = parseJsoncObject(fs.readFileSync(settingsFile, 'utf8'));
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) settings = {};
+  const toMigrate = {};
+  for (const key of B4XPP_GLOBAL_SETTING_KEYS) {
+    const full = `b4xpp.${key}`;
+    if (Object.prototype.hasOwnProperty.call(settings, full)) {
+      toMigrate[key] = settings[full];
+      delete settings[full];
+    }
+  }
+  await saveB4XPPGlobalSettings(toMigrate);
+  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 4) + '\n', 'utf8');
+  try { await vscode.workspace.fs.writeFile(vscode.Uri.file(settingsFile), Buffer.from(JSON.stringify(settings, null, 4) + '\n', 'utf8')); } catch {}
+  return { keyCount: Object.keys(toMigrate).length, settingsFile };
+}
+
+function renderB4XPPGlobalSettingsWebview(webview, extensionUri, state) {
+  const nonce = makeNonce();
+  const safeState = state || {};
+  const json = JSON.stringify(safeState).replace(/</g, '\\u003c');
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'b4xpp-global-settings.js'));
+  const valueAttr = (key) => escapeHtml(safeState[key] == null ? '' : safeState[key]);
+  const checkedAttr = (key) => safeState[key] === true ? ' checked' : '';
+  const arrayTextarea = (key) => escapeHtml((Array.isArray(safeState[key]) ? safeState[key] : []).join('\n'));
+  const overrides = Array.isArray(safeState.workspaceOverrides) ? safeState.workspaceOverrides : [];
+  const overrideHtml = overrides.length ? `<div class="warn">Workspace overrides found and can shadow global settings:<br><code>${escapeHtml(overrides.join('</code><br><code>'))}</code><br><button type="button" class="secondary" id="migrateWorkspaceSettings">Move these to B4X++ global settings</button></div>` : '<div class="small">No project-local tool settings detected in the current workspace.</div>';
+  const fallbackKeys = Array.isArray(safeState.globalStateFallbackKeys) ? safeState.globalStateFallbackKeys : [];
+  const fallbackHtml = fallbackKeys.length ? `<div class="warn">Some settings are currently stored in B4X++ extension global-state fallback because VS Code refused to write them as User Settings before this fix:<br><code>${escapeHtml(fallbackKeys.join('</code><br><code>'))}</code><br>Click Save global settings again after reloading VS Code to try writing them to User Settings.</div>` : '';
+  return String.raw`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};">
+<title>B4X++ Settings</title>
+<style>
+:root { color-scheme: light dark; } body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin:0; }
+header { padding:18px 22px; border-bottom:1px solid var(--vscode-panel-border); background:var(--vscode-sideBar-background); } h1 { margin:0 0 6px; font-size:20px; } main { padding:18px 22px 28px; max-width:1050px; }
+section { border:1px solid var(--vscode-panel-border); border-radius:8px; padding:14px; margin-bottom:14px; background:var(--vscode-editorWidget-background); } h2 { margin:0 0 12px; font-size:15px; }
+label { display:block; font-weight:600; margin:11px 0 5px; } input[type="text"], textarea { width:100%; box-sizing:border-box; color:var(--vscode-input-foreground); background:var(--vscode-input-background); border:1px solid var(--vscode-input-border); border-radius:4px; padding:7px 8px; font-family:var(--vscode-font-family); }
+textarea { min-height:76px; resize:vertical; font-family:var(--vscode-editor-font-family); } .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .libs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.libbox { border:1px solid var(--vscode-panel-border); border-radius:6px; padding:10px; } .row { display:flex; gap:8px; align-items:center; } .row > * { flex:1; }
+.check { display:flex; gap:8px; align-items:center; font-weight:400; margin:8px 0; } button { border:none; border-radius:4px; padding:8px 12px; cursor:pointer; color:var(--vscode-button-foreground); background:var(--vscode-button-background); } button.secondary { color:var(--vscode-button-secondaryForeground); background:var(--vscode-button-secondaryBackground); }
+.actions { position:sticky; bottom:0; display:flex; gap:8px; justify-content:flex-end; padding:12px 22px; border-top:1px solid var(--vscode-panel-border); background:var(--vscode-editor-background); } .hint,.small { color:var(--vscode-descriptionForeground); line-height:1.45; } code { font-family:var(--vscode-editor-font-family); }
+.warn { border:1px solid var(--vscode-inputValidation-warningBorder); background:var(--vscode-inputValidation-warningBackground); padding:10px; border-radius:6px; margin-top:10px; }
+@media (max-width:850px){ .grid,.libs { grid-template-columns:1fr; } }
+</style></head><body>
+<header><h1>B4X++ Settings <span class="small">global toolchain</span></h1><div class="hint">These values are saved in VS Code User Settings and are shared by all B4X++ projects. Current workspace: <code>${escapeHtml(safeState.workspacePath || '')}</code></div></header>
+<main>
+<section><h2>Native B4X builders</h2><div class="grid">
+<div><label>B4JBuilder.exe path</label><div class="row"><input data-key="b4j.builderPath" type="text" value="${valueAttr('b4j.builderPath')}"><button type="button" class="secondary" data-browse-file="b4j.builderPath">Browse…</button></div></div>
+<div><label>B4ABuilder.exe path</label><div class="row"><input data-key="b4a.builderPath" type="text" value="${valueAttr('b4a.builderPath')}"><button type="button" class="secondary" data-browse-file="b4a.builderPath">Browse…</button></div></div>
+<div><label>B4i builder path / custom tool</label><div class="row"><input data-key="b4i.builderPath" type="text" value="${valueAttr('b4i.builderPath')}"><button type="button" class="secondary" data-browse-file="b4i.builderPath">Browse…</button></div></div>
+<div><label>Default build task</label><input data-key="buildTask" type="text" value="${valueAttr('buildTask')}"></div>
+</div>
+<label>Custom B4J build command</label><input data-key="b4jBuildCommand" type="text" value="${valueAttr('b4jBuildCommand')}">
+<label>Custom B4A build command</label><input data-key="b4aBuildCommand" type="text" value="${valueAttr('b4aBuildCommand')}">
+<label>Custom B4i build command</label><input data-key="b4iBuildCommand" type="text" value="${valueAttr('b4iBuildCommand')}">
+<label class="check"><input data-key="buildShowWarnings" type="checkbox"${checkedAttr('buildShowWarnings')}> Show B4X compiler warnings</label>
+<label class="check"><input data-key="buildUseBaseFolder" type="checkbox"${checkedAttr('buildUseBaseFolder')}> Use -BaseFolder with B4X builders</label>
+</section>
+<section><h2>BANano runtime</h2><div class="grid">
+<div><label>java.exe path</label><div class="row"><input data-key="banano.javaPath" type="text" value="${valueAttr('banano.javaPath')}"><button type="button" class="secondary" data-browse-file="banano.javaPath">Browse…</button></div></div>
+<div><label>JavaFX lib folder</label><div class="row"><input data-key="banano.javaFxLibPath" type="text" value="${valueAttr('banano.javaFxLibPath')}"><button type="button" class="secondary" data-browse-dir="banano.javaFxLibPath">Browse…</button></div></div>
+<div><label>BANano local server port</label><input data-key="bananoServer.port" type="text" value="${valueAttr('bananoServer.port')}"></div>
+</div>
+<label class="check"><input data-key="banano.runJarAfterBuild" type="checkbox"${checkedAttr('banano.runJarAfterBuild')}> Run generated BANano jar after B4J build</label>
+<label class="check"><input data-key="banano.promptServeAfterRun" type="checkbox"${checkedAttr('banano.promptServeAfterRun')}> Ask to serve generated index.html after jar execution</label>
+<label class="check"><input data-key="bananoServer.openBrowser" type="checkbox"${checkedAttr('bananoServer.openBrowser')}> Open browser when serving BANano output</label>
+</section>
+<section><h2>Library directories</h2><p class="hint">Global B4X/B4X++ library folders. Project-specific dependencies stay in <code>#ProjectDependsOn</code> / <code>#B4XLibDependsOn</code> directives.</p><div class="libs">
+${renderGlobalLibraryBox('b4j','B4J',safeState)}${renderGlobalLibraryBox('b4a','B4A',safeState)}${renderGlobalLibraryBox('b4i','B4i',safeState)}
+</div></section>
+<section><h2>IntelliSense / validation</h2>
+<label class="check"><input data-key="enableSemanticDiagnostics" type="checkbox"${checkedAttr('enableSemanticDiagnostics')}> Enable semantic diagnostics</label>
+<label class="check"><input data-key="validation.strict" type="checkbox"${checkedAttr('validation.strict')}> Strict validation before generation/build</label>
+</section>
+<section><h2>Migration from current project</h2><p class="hint">Old B4X++ versions stored tool and library settings in the current project <code>.vscode/settings.json</code>. Move them here to share them across all projects.</p>${overrideHtml}${fallbackHtml}</section>
+</main><div id="saveStatus" class="hint" style="padding:0 22px 8px;text-align:right"></div><div class="actions"><button type="button" class="secondary" id="reload">Reload</button><button type="button" class="secondary" id="openUserSettingsJson">Open User settings.json</button><button type="button" id="save">Save global settings</button></div>
+<textarea id="b4xpp-state-json" hidden>${escapeHtml(json)}</textarea><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
+}
+
+function renderGlobalLibraryBox(platform, label, state) {
+  const internalKey = `${platform}.internalLibraryDirs`;
+  const additionalKey = `${platform}.additionalLibraryDirs`;
+  return `<div class="libbox"><h3>${escapeHtml(label)}</h3><label>Internal library folders</label><textarea data-key="${internalKey}" spellcheck="false">${escapeHtml((Array.isArray(state && state[internalKey]) ? state[internalKey] : []).join('\n'))}</textarea><div class="row"><button type="button" class="secondary" data-browse-dir="${internalKey}">Add internal folder…</button></div><label>Additional library folders</label><textarea data-key="${additionalKey}" spellcheck="false">${escapeHtml((Array.isArray(state && state[additionalKey]) ? state[additionalKey] : []).join('\n'))}</textarea><div class="row"><button type="button" class="secondary" data-browse-dir="${additionalKey}">Add additional folder…</button></div></div>`;
+}
+
+
 function getProjectSettingsState(folder, overrideValues) {
   const cfg = vscode.workspace.getConfiguration('b4xpp', folder.uri);
   const rawSettings = readWorkspaceB4XPPSettings(folder);
   const keys = [
     'sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform',
     'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath', 'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand', 'buildConfiguration', 'buildTask',
+    'bananoServer.port', 'bananoServer.openBrowser',
     'validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles', 'buildShowWarnings', 'buildUseBaseFolder',
     'b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs',
     'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs',
@@ -249,6 +635,12 @@ function getProjectSettingsState(folder, overrideValues) {
 function getB4XPPWorkspaceValue(cfg, rawSettings, key) {
   const fullKey = `b4xpp.${key}`;
   if (rawSettings && Object.prototype.hasOwnProperty.call(rawSettings, fullKey)) return rawSettings[fullKey];
+  let inspected = undefined;
+  try { inspected = cfg.inspect(key); } catch (_) {}
+  if (!hasExplicitVSCodeB4XPPSetting(inspected)) {
+    const stateValue = getB4XPPGlobalStateSetting(key);
+    if (stateValue !== undefined) return Array.isArray(stateValue) ? stateValue.slice() : stateValue;
+  }
   const value = cfg.get(key);
   if (Array.isArray(value)) return value.slice();
   return value;
@@ -466,10 +858,11 @@ function applyB4XIdeHeaderToDirectiveState(directives, header, filePath, state) 
 function listAvailableLibrariesForProject(folder, values, directives) {
   const normalized = normalizeProjectSettingsValues(values || {});
   const bundledB4XPPLibDirs = getBundledB4XPPLibDirs();
+  const rootPath = folder && folder.uri && folder.uri.fsPath;
   const dirsByPlatform = {
-    b4j: [...(normalized['b4j.internalLibraryDirs'] || []), ...(normalized['b4j.additionalLibraryDirs'] || []), ...bundledB4XPPLibDirs],
-    b4a: [...(normalized['b4a.internalLibraryDirs'] || []), ...(normalized['b4a.additionalLibraryDirs'] || []), ...bundledB4XPPLibDirs],
-    b4i: [...(normalized['b4i.internalLibraryDirs'] || []), ...(normalized['b4i.additionalLibraryDirs'] || []), ...bundledB4XPPLibDirs]
+    b4j: [...withAutoLibraryDirsForPlatform('b4j', [...(normalized['b4j.internalLibraryDirs'] || []), ...(normalized['b4j.additionalLibraryDirs'] || [])], values || {}, rootPath), ...bundledB4XPPLibDirs],
+    b4a: [...withAutoLibraryDirsForPlatform('b4a', [...(normalized['b4a.internalLibraryDirs'] || []), ...(normalized['b4a.additionalLibraryDirs'] || [])], values || {}, rootPath), ...bundledB4XPPLibDirs],
+    b4i: [...withAutoLibraryDirsForPlatform('b4i', [...(normalized['b4i.internalLibraryDirs'] || []), ...(normalized['b4i.additionalLibraryDirs'] || [])], values || {}, rootPath), ...bundledB4XPPLibDirs]
   };
   const result = { b4j: [], b4a: [], b4i: [], active: [] };
   for (const platform of Object.keys(dirsByPlatform)) result[platform] = scanLibraryNamesInDirs(dirsByPlatform[platform]);
@@ -682,15 +1075,13 @@ function buildProjectDirectiveLines(d) {
 
 function normalizeProjectSettingsValues(values) {
   const out = {};
-  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform', 'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath', 'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand', 'buildConfiguration', 'buildTask'];
-  const boolKeys = ['validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles', 'buildShowWarnings', 'buildUseBaseFolder'];
-  const arrayKeys = [
-    'b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs',
-    'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs',
-    'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'
-  ];
+  // v0.5.10: only project-specific values are written to .vscode/settings.json.
+  // Toolchain / IDE / library / BANano runtime values are global B4X++ settings.
+  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform', 'buildConfiguration', 'mainModuleName', 'mobileMainModuleName'];
+  const boolKeys = ['addGeneratedHeader', 'overwriteGeneratedFiles', 'includeTimestamp', 'writeLineSourceMap'];
+  const arrayKeys = [];
   for (const key of stringKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = String(values[key] == null ? '' : values[key]).trim();
-  if (!['auto', 'b4j', 'b4a', 'b4i'].includes(out.platform)) out.platform = 'auto';
+  if (Object.prototype.hasOwnProperty.call(out, 'platform') && !['auto', 'b4j', 'b4a', 'b4i', 'banano'].includes(String(out.platform).toLowerCase())) out.platform = 'auto';
   for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = values[key] === true || values[key] === 'true';
   for (const key of arrayKeys) if (Object.prototype.hasOwnProperty.call(values, key)) out[key] = normalizeDirectoryList(values[key]);
   return out;
@@ -711,6 +1102,132 @@ function normalizeDirectoryList(value) {
   return out;
 }
 
+
+function existingDirs(dirs) {
+  const out = [];
+  for (const dir of dirs || []) {
+    if (!dir) continue;
+    try {
+      const full = path.normalize(String(dir));
+      if (fs.existsSync(full) && fs.statSync(full).isDirectory()) out.push(full);
+    } catch {}
+  }
+  return uniqueStrings(normalizeDirectoryList(out));
+}
+
+function looksLikeB4XLibraryDir(dir) {
+  try {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+    const entries = fs.readdirSync(dir);
+    return entries.some(e => /\.(xml|jar|b4xlib|b4xpplib)$/i.test(e));
+  } catch { return false; }
+}
+
+function defaultInternalLibraryCandidates(platformKey, config = {}) {
+  const p = String(platformKey || '').toLowerCase();
+  const dirs = [];
+  const addFromBuilder = (builderPath) => {
+    const clean = stripWrappingQuotes(builderPath || '');
+    if (!clean) return;
+    const base = path.dirname(clean);
+    dirs.push(path.join(base, 'Libraries'));
+    dirs.push(path.join(base, '..', 'Libraries'));
+  };
+  if (p === 'b4j') {
+    dirs.push('C:\\Program Files\\Anywhere Software\\B4J\\Libraries');
+    dirs.push('C:\\Program Files (x86)\\Anywhere Software\\B4J\\Libraries');
+    addFromBuilder(config.b4jBuilderPath || config['b4j.builderPath']);
+  } else if (p === 'b4a') {
+    dirs.push('C:\\Program Files\\Anywhere Software\\B4A\\Libraries');
+    dirs.push('C:\\Program Files (x86)\\Anywhere Software\\B4A\\Libraries');
+    dirs.push('C:\\Program Files\\Anywhere Software\\Basic4android\\Libraries');
+    dirs.push('C:\\Program Files (x86)\\Anywhere Software\\Basic4android\\Libraries');
+    addFromBuilder(config.b4aBuilderPath || config['b4a.builderPath']);
+  } else if (p === 'b4i') {
+    dirs.push('C:\\Program Files\\Anywhere Software\\B4i\\Libraries');
+    dirs.push('C:\\Program Files (x86)\\Anywhere Software\\B4i\\Libraries');
+    addFromBuilder(config.b4iBuilderPath || config['b4i.builderPath']);
+  }
+  return existingDirs(dirs);
+}
+
+function collectSmallIniFiles(dir, out, depth) {
+  if (!dir || depth < 0) return;
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) collectSmallIniFiles(full, out, depth - 1);
+    else if (/\.(ini|txt|json|properties|config)$/i.test(entry.name)) {
+      try {
+        const st = fs.statSync(full);
+        if (st.size <= 1024 * 1024) out.push(full);
+      } catch {}
+    }
+  }
+}
+
+function discoverB4XAdditionalLibraryDirs(platformKey) {
+  const p = String(platformKey || '').toLowerCase();
+  const productNames = p === 'b4a' ? ['B4A', 'Basic4android'] : p === 'b4i' ? ['B4i'] : ['B4J'];
+  const bases = uniqueStrings([
+    process.env.APPDATA,
+    process.env.LOCALAPPDATA,
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Roaming') : '',
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'Documents') : ''
+  ].filter(Boolean));
+  const candidateFiles = [];
+  const candidateDirs = [];
+  for (const base of bases) {
+    for (const product of productNames) {
+      candidateDirs.push(path.join(base, 'Anywhere Software', product));
+      candidateDirs.push(path.join(base, product));
+    }
+  }
+  for (const dir of candidateDirs) collectSmallIniFiles(dir, candidateFiles, 3);
+
+  const dirs = [];
+  for (const file of uniqueStrings(candidateFiles)) {
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    for (const line of text.split(/\r?\n/)) {
+      if (!/(lib|additional|folder|path|library)/i.test(line)) continue;
+      const re = /([A-Za-z]:\\[^;,"'\r\n]+)/g;
+      let m;
+      while ((m = re.exec(line))) {
+        const dir = String(m[1] || '').trim().replace(/^['"]|['"]$/g, '');
+        if (looksLikeB4XLibraryDir(dir)) dirs.push(dir);
+      }
+    }
+  }
+  return uniqueStrings(normalizeDirectoryList(dirs));
+}
+
+function workspaceLibraryCandidates(workspaceRoot) {
+  if (!workspaceRoot) return [];
+  return existingDirs([
+    path.join(workspaceRoot, 'Libraries'),
+    path.join(workspaceRoot, 'libs'),
+    path.join(workspaceRoot, 'b4x-libs'),
+    path.join(workspaceRoot, 'b4xpp-libs')
+  ]).filter(looksLikeB4XLibraryDir);
+}
+
+function autoLibraryDirsForPlatform(platformKey, config = {}, workspaceRoot = '') {
+  return uniqueStrings([
+    ...defaultInternalLibraryCandidates(platformKey, config),
+    ...discoverB4XAdditionalLibraryDirs(platformKey),
+    ...workspaceLibraryCandidates(workspaceRoot)
+  ]);
+}
+
+function withAutoLibraryDirsForPlatform(platformKey, configuredDirs, config = {}, workspaceRoot = '') {
+  return uniqueStrings(normalizeDirectoryList([
+    ...(configuredDirs || []),
+    ...autoLibraryDirsForPlatform(platformKey, config, workspaceRoot)
+  ]));
+}
+
 async function openWorkspaceSettingsJson(folder) {
   const settingsDir = path.join(folder.uri.fsPath, '.vscode');
   const settingsFile = path.join(settingsDir, 'settings.json');
@@ -724,180 +1241,51 @@ function renderProjectSettingsWebview(webview, extensionUri, state) {
   const nonce = makeNonce();
   const safeState = state || {};
   const safeDirectives = safeState.directives || {};
-  const json = JSON.stringify(safeState).replace(/</g, '\\u003c');
+  const json = JSON.stringify(safeState).replace(/</g, '\u003c');
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'project-settings.js'));
   const valueAttr = (key) => escapeHtml(safeState[key] == null ? '' : safeState[key]);
   const dirValueAttr = (key) => escapeHtml(safeDirectives[key] == null ? '' : safeDirectives[key]);
   const checkedAttr = (key) => safeState[key] === true ? ' checked' : '';
   const selectAttr = (key, value) => String(safeState[key] == null ? '' : safeState[key]).toLowerCase() === String(value).toLowerCase() ? ' selected' : '';
-  const dirSelectAttr = (key, value) => String(safeDirectives[key] == null ? '' : safeDirectives[key]).toLowerCase() === String(value).toLowerCase() ? ' selected' : '';
-  const arrayTextarea = (key) => escapeHtml((Array.isArray(safeState[key]) ? safeState[key] : []).join('\n'));
   const dirArrayTextarea = (key) => escapeHtml((Array.isArray(safeDirectives[key]) ? safeDirectives[key] : []).join('\n'));
   const platformChecked = (platform) => (safeDirectives.b4xLibSupportedPlatforms || safeDirectives.supportedPlatforms || []).map(v => String(v).toLowerCase()).includes(String(platform).toLowerCase()) ? ' checked' : '';
   return String.raw`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};">
-<title>B4X++ Project Settings</title>
+<title>B4X++ Current Project Settings</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; }
-  header { padding: 18px 22px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
-  h1 { margin: 0 0 6px; font-size: 20px; }
-  .hint { color: var(--vscode-descriptionForeground); line-height: 1.45; }
-  main { padding: 18px 22px 28px; max-width: 1050px; }
-  section { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px; margin-bottom: 14px; background: var(--vscode-editorWidget-background); }
-  h2 { margin: 0 0 12px; font-size: 15px; }
-  label { display: block; font-weight: 600; margin: 11px 0 5px; }
-  input[type="text"], select, textarea { width: 100%; box-sizing: border-box; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 7px 8px; font-family: var(--vscode-font-family); }
-  textarea { min-height: 76px; resize: vertical; font-family: var(--vscode-editor-font-family); }
-  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .checks { display: grid; gap: 8px; margin-top: 8px; }
-  .check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
-  .libs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .libbox { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px; }
-  .libbox h3 { margin: 0 0 8px; font-size: 13px; }
-  .row { display: flex; gap: 8px; align-items: center; }
-  .row > * { flex: 1; }
-  button { border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-  button:hover { background: var(--vscode-button-hoverBackground); }
-  button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-  button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .actions { position: sticky; bottom: 0; display: flex; gap: 8px; justify-content: flex-end; padding: 12px 22px; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
-  code { font-family: var(--vscode-editor-font-family); color: var(--vscode-textPreformat-foreground); }
-  .small { font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .pillgrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-  .pill { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--vscode-panel-border); border-radius: 999px; padding: 5px 9px; font-weight: 400; }
-  .liblist { max-height: 230px; overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px; background: var(--vscode-editor-background); }
-  .librow { display: flex; gap: 7px; align-items: center; padding: 3px 0; font-weight: 400; }
-  .librow code { font-size: 11px; opacity: .75; }
-  @media (max-width: 850px) { .grid, .libs { grid-template-columns: 1fr; } }
-</style>
-</head>
-<body>
-<header>
-  <h1>B4X++ Project Settings <span class="small">0.4.3 native build</span></h1>
-  <div class="hint">Workspace: <code id="workspacePath"></code><br>These values are saved to <code>.vscode/settings.json</code> for the current project only.<br>Settings file: <code id="settingsJsonPath"></code></div>
-</header>
+:root { color-scheme: light dark; } body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin:0; } header { padding:18px 22px; border-bottom:1px solid var(--vscode-panel-border); background:var(--vscode-sideBar-background); } h1 { margin:0 0 6px; font-size:20px; } main { padding:18px 22px 28px; max-width:1050px; } section { border:1px solid var(--vscode-panel-border); border-radius:8px; padding:14px; margin-bottom:14px; background:var(--vscode-editorWidget-background); } h2 { margin:0 0 12px; font-size:15px; } label { display:block; font-weight:600; margin:11px 0 5px; } input[type="text"], select, textarea { width:100%; box-sizing:border-box; color:var(--vscode-input-foreground); background:var(--vscode-input-background); border:1px solid var(--vscode-input-border); border-radius:4px; padding:7px 8px; font-family:var(--vscode-font-family); } textarea { min-height:76px; resize:vertical; font-family:var(--vscode-editor-font-family); } .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .checks { display:grid; gap:8px; margin-top:8px; } .check { display:flex; gap:8px; align-items:center; font-weight:400; } button { border:none; border-radius:4px; padding:8px 12px; cursor:pointer; color:var(--vscode-button-foreground); background:var(--vscode-button-background); } button.secondary { color:var(--vscode-button-secondaryForeground); background:var(--vscode-button-secondaryBackground); } .actions { position:sticky; bottom:0; display:flex; gap:8px; justify-content:flex-end; padding:12px 22px; border-top:1px solid var(--vscode-panel-border); background:var(--vscode-editor-background); } .hint,.small { color:var(--vscode-descriptionForeground); line-height:1.45; } code { font-family:var(--vscode-editor-font-family); } .pillgrid { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; } .pill { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--vscode-panel-border); border-radius:999px; padding:5px 9px; font-weight:400; } .liblist { max-height:230px; overflow:auto; border:1px solid var(--vscode-panel-border); border-radius:6px; padding:8px; background:var(--vscode-editor-background); } .librow { display:flex; gap:7px; align-items:center; padding:3px 0; font-weight:400; } .librow code { font-size:11px; opacity:.75; } @media (max-width:850px){ .grid { grid-template-columns:1fr; } }
+</style></head><body>
+<header><h1>B4X++ Current Project Settings <span class="small">project-local</span></h1><div class="hint">Workspace: <code id="workspacePath"></code><br>Only project-specific values are saved to <code>.vscode/settings.json</code>. Toolchain, Java, builders and library folders are now in <b>B4X++ Settings</b>.</div></header>
 <main>
-  <section>
-    <h2>Project</h2>
-    <div class="grid">
-      <div><label>Source folder</label><input id="sourceDir" data-key="sourceDir" type="text" value="${valueAttr('sourceDir')}"></div>
-      <div><label>Generated .bas folder</label><input id="outputDir" data-key="outputDir" type="text" value="${valueAttr('outputDir')}"></div>
-      <div><label>B4X IDE projects folder</label><input id="projectDir" data-key="projectDir" type="text" value="${valueAttr('projectDir')}"></div>
-      <div><label>B4XLib output folder</label><input id="b4xlibDir" data-key="b4xlibDir" type="text" value="${valueAttr('b4xlibDir')}"></div>
-      <div><label>B4XPPLib output folder</label><input id="b4xpplibDir" data-key="b4xpplibDir" type="text" value="${valueAttr('b4xpplibDir')}"></div>
-      <div><label>Default package name</label><input id="packageName" data-key="packageName" type="text" value="${valueAttr('packageName')}"></div>
-      <div><label>Fallback platform</label><select id="platform" data-key="platform"><option value="auto"${selectAttr('platform', 'auto')}>auto</option><option value="b4j"${selectAttr('platform', 'b4j')}>B4J</option><option value="b4a"${selectAttr('platform', 'b4a')}>B4A</option><option value="b4i"${selectAttr('platform', 'b4i')}>B4i</option></select><div class="small">Used only when no #Project or platform-specific #...DependsOn directive can resolve the platform.</div></div>
-    </div>
-    <div class="checks">
-      <label class="check"><input id="validationStrict" data-key="validation.strict" type="checkbox"${checkedAttr('validation.strict')}> Strict validation before generation/build</label>
-      <label class="check"><input id="semanticDiagnostics" data-key="enableSemanticDiagnostics" type="checkbox"${checkedAttr('enableSemanticDiagnostics')}> Enable semantic diagnostics in VS Code</label>
-      <label class="check"><input id="addGeneratedHeader" data-key="addGeneratedHeader" type="checkbox"${checkedAttr('addGeneratedHeader')}> Add generated header</label>
-      <label class="check"><input id="overwriteGeneratedFiles" data-key="overwriteGeneratedFiles" type="checkbox"${checkedAttr('overwriteGeneratedFiles')}> Overwrite generated files</label>
-    </div>
-  </section>
-  <section>
-    <h2>Native B4X build</h2>
-    <p class="hint">B4X++ can sync the generated project, run B4JBuilder / B4ABuilder or a custom command, then remap compiler errors back to the original <code>.bx</code> lines.</p>
-    <div class="grid">
-      <div><label>B4JBuilder.exe path</label><input id="b4j_builderPath" data-key="b4j.builderPath" type="text" value="${valueAttr('b4j.builderPath')}" placeholder="C:\Program Files\Anywhere Software\B4J\B4JBuilder.exe"></div>
-      <div><label>B4ABuilder.exe path</label><input id="b4a_builderPath" data-key="b4a.builderPath" type="text" value="${valueAttr('b4a.builderPath')}" placeholder="C:\Program Files\Anywhere Software\B4A\B4ABuilder.exe"></div>
-      <div><label>B4i builder path / custom tool</label><input id="b4i_builderPath" data-key="b4i.builderPath" type="text" value="${valueAttr('b4i.builderPath')}" placeholder="optional; usually use custom command below"></div>
-      <div><label>Build configuration</label><input id="buildConfiguration" data-key="buildConfiguration" type="text" value="${valueAttr('buildConfiguration')}" placeholder="Default"></div>
-      <div><label>Build task</label><input id="buildTask" data-key="buildTask" type="text" value="${valueAttr('buildTask')}" placeholder="Build"></div>
-    </div>
-    <div class="checks">
-      <label class="check"><input id="buildShowWarnings" data-key="buildShowWarnings" type="checkbox"${checkedAttr('buildShowWarnings')}> Pass <code>-ShowWarnings=True</code></label>
-      <label class="check"><input id="buildUseBaseFolder" data-key="buildUseBaseFolder" type="checkbox"${checkedAttr('buildUseBaseFolder')}> Pass <code>-BaseFolder=&lt;project folder&gt;</code></label>
-    </div>
-    <div class="grid">
-      <div><label>Custom B4J command</label><input id="b4jBuildCommand" data-key="b4jBuildCommand" type="text" value="${valueAttr('b4jBuildCommand')}" placeholder="optional; leave empty to use B4JBuilder.exe"></div>
-      <div><label>Custom B4A command</label><input id="b4aBuildCommand" data-key="b4aBuildCommand" type="text" value="${valueAttr('b4aBuildCommand')}" placeholder="optional; leave empty to use B4ABuilder.exe"></div>
-      <div><label>Custom B4i command</label><input id="b4iBuildCommand" data-key="b4iBuildCommand" type="text" value="${valueAttr('b4iBuildCommand')}" placeholder="custom B4i/Mac builder workflow command"></div>
-    </div>
-    <p class="small">Custom command placeholders: <code>{project}</code>, <code>{workspace}</code>, <code>{projectDir}</code>, <code>{configuration}</code>, <code>{task}</code>.</p>
-  </section>
-  <section>
-    <h2>Main .bx directives</h2>
-    <p class="hint">Project directives generate the native <code>.b4j</code>, <code>.b4a</code> or <code>.b4i</code> header (<code>Library1=...</code>, <code>Module1=...</code>, <code>Version=...</code>). B4XLib directives are separate and are written to the <code>manifest.txt</code> inside the generated <code>.b4xlib</code>.</p>
-    <div class="grid">
-      <div><label>Main .bx file</label><input id="dir_mainBxPath" data-dir-key="mainBxPath" type="text" readonly value="${dirValueAttr('mainBxPath')}"><div class="small">Detected from the source folder. Open another .bx file before opening this UI if needed.</div></div>
-      <div><label>#Project platform</label><select id="dir_projectPlatform" data-dir-key="projectPlatform"><option value=""${dirSelectAttr('projectPlatform', '')}>keep / none</option><option value="B4J-UI"${dirSelectAttr('projectPlatform', 'B4J-UI')}>B4J-UI</option><option value="B4J-NonUI"${dirSelectAttr('projectPlatform', 'B4J-NonUI')}>B4J-NonUI</option><option value="B4A"${dirSelectAttr('projectPlatform', 'B4A')}>B4A</option><option value="B4i"${dirSelectAttr('projectPlatform', 'B4i')}>B4i</option></select></div>
-      <div><label>#Project name</label><input id="dir_projectName" data-dir-key="projectName" type="text" value="${dirValueAttr('projectName')}"></div>
-      <div><label>#Package</label><input id="dir_packageName" data-dir-key="packageName" type="text" value="${dirValueAttr('packageName')}"></div>
-      <div><label>#ProjectDir</label><input id="dir_projectDir" data-dir-key="projectDir" type="text" value="${dirValueAttr('projectDir')}"></div>
-      <div><label>#MainModule</label><input id="dir_mainModule" data-dir-key="mainModule" type="text" value="${dirValueAttr('mainModule')}"></div>
-    </div>
-    <h2 style="margin-top:18px">Native B4X IDE project libraries</h2>
-    <p class="small">These libraries are written to generated project headers as <code>Library1=...</code>, <code>Library2=...</code>. They are not B4XLib manifest metadata.</p>
-    <div class="row" style="margin:8px 0 4px"><button type="button" class="secondary" id="importIdeHeader">Import libraries from existing .b4j/.b4a/.b4i...</button></div>
-    <div class="grid">
-      <div><label>#ProjectDependsOn</label><textarea id="dir_projectDependsOn" data-dir-array="projectDependsOn" spellcheck="false">${dirArrayTextarea('projectDependsOn')}</textarea></div>
-      <div><label>#ProjectB4JDependsOn</label><textarea id="dir_projectB4JDependsOn" data-dir-array="projectB4JDependsOn" spellcheck="false">${dirArrayTextarea('projectB4JDependsOn')}</textarea></div>
-      <div><label>#ProjectB4ADependsOn</label><textarea id="dir_projectB4ADependsOn" data-dir-array="projectB4ADependsOn" spellcheck="false">${dirArrayTextarea('projectB4ADependsOn')}</textarea></div>
-      <div><label>#ProjectB4iDependsOn</label><textarea id="dir_projectB4iDependsOn" data-dir-array="projectB4iDependsOn" spellcheck="false">${dirArrayTextarea('projectB4iDependsOn')}</textarea></div>
-    </div>
-    <h2 style="margin-top:18px">B4XLib manifest metadata</h2>
-    <div class="grid">
-      <div><label>#B4XLib</label><input id="dir_b4xLib" data-dir-key="b4xLib" type="text" value="${dirValueAttr('b4xLib')}"></div>
-      <div><label>#B4XLibDir</label><input id="dir_b4xLibDir" data-dir-key="b4xLibDir" type="text" value="${dirValueAttr('b4xLibDir')}"></div>
-      <div><label>#B4XLibVersion</label><input id="dir_b4xLibVersion" data-dir-key="b4xLibVersion" type="text" value="${dirValueAttr('b4xLibVersion')}"></div>
-      <div><label>#B4XLibAuthor</label><input id="dir_b4xLibAuthor" data-dir-key="b4xLibAuthor" type="text" value="${dirValueAttr('b4xLibAuthor')}"></div>
-    </div>
-    <label>#B4XLibSupportedPlatforms <span class="small">optional B4X++ metadata; when omitted, platforms are inferred from <code>#B4XLibB4JDependsOn</code> / <code>#B4XLibB4ADependsOn</code> / <code>#B4XLibB4iDependsOn</code>.</span></label>
-    <div class="pillgrid">
-      <label class="pill"><input type="checkbox" data-platform-choice="B4J"${platformChecked('B4J')}> B4J</label>
-      <label class="pill"><input type="checkbox" data-platform-choice="B4A"${platformChecked('B4A')}> B4A</label>
-      <label class="pill"><input type="checkbox" data-platform-choice="B4i"${platformChecked('B4i')}> B4i</label>
-    </div>
-    <div class="grid">
-      <div><label>#B4XLibDependsOn</label><textarea id="dir_b4xLibDependsOn" data-dir-array="b4xLibDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibDependsOn')}</textarea></div>
-      <div><label>#B4XLibB4JDependsOn</label><textarea id="dir_b4xLibB4JDependsOn" data-dir-array="b4xLibB4JDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4JDependsOn')}</textarea></div>
-      <div><label>#B4XLibB4ADependsOn</label><textarea id="dir_b4xLibB4ADependsOn" data-dir-array="b4xLibB4ADependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4ADependsOn')}</textarea></div>
-      <div><label>#B4XLibB4iDependsOn</label><textarea id="dir_b4xLibB4iDependsOn" data-dir-array="b4xLibB4iDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4iDependsOn')}</textarea></div>
-    </div>
-    <h2 style="margin-top:18px">B4XPPLib source packages</h2>
-    <p class="small">B4XPPLib dependencies are zipped <code>.bx</code> sources. They are compiled into the generated <code>.bas</code> output of the consuming project.</p>
-    <div class="grid">
-      <div><label>#B4XPPLib</label><input id="dir_b4xppLib" data-dir-key="b4xppLib" type="text" value="${dirValueAttr('b4xppLib')}"></div>
-      <div><label>#B4XPPLibDir</label><input id="dir_b4xppLibDir" data-dir-key="b4xppLibDir" type="text" value="${dirValueAttr('b4xppLibDir')}"></div>
-      <div><label>#B4XPPLibVersion</label><input id="dir_b4xppLibVersion" data-dir-key="b4xppLibVersion" type="text" value="${dirValueAttr('b4xppLibVersion')}"></div>
-      <div><label>#B4XPPLibAuthor</label><input id="dir_b4xppLibAuthor" data-dir-key="b4xppLibAuthor" type="text" value="${dirValueAttr('b4xppLibAuthor')}"></div>
-      <div><label>#B4XPPLibSupportedPlatforms</label><textarea id="dir_b4xppLibSupportedPlatforms" data-dir-array="b4xppLibSupportedPlatforms" spellcheck="false">${dirArrayTextarea('b4xppLibSupportedPlatforms')}</textarea></div>
-      <div><label>#B4XPPLibDependsOn</label><textarea id="dir_b4xppLibDependsOn" data-dir-array="b4xppLibDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibDependsOn')}</textarea></div>
-      <div><label>#B4XPPLibB4JDependsOn</label><textarea id="dir_b4xppLibB4JDependsOn" data-dir-array="b4xppLibB4JDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4JDependsOn')}</textarea></div>
-      <div><label>#B4XPPLibB4ADependsOn</label><textarea id="dir_b4xppLibB4ADependsOn" data-dir-array="b4xppLibB4ADependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4ADependsOn')}</textarea></div>
-      <div><label>#B4XPPLibB4iDependsOn</label><textarea id="dir_b4xppLibB4iDependsOn" data-dir-array="b4xppLibB4iDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4iDependsOn')}</textarea></div>
-    </div>
-    <div class="row" style="margin-top:10px"><button type="button" class="secondary" id="reloadLibraries">Reload libraries from configured folders</button></div>
-    <label>Available libraries for the active platform(s)</label>
-    <div id="availableLibraries" class="liblist"><span class="small">No library index loaded yet.</span></div>
-    <div class="small">Checking a .xml/.b4xlib library adds it to the native IDE project library directive (<code>#ProjectB4JDependsOn</code>, <code>#ProjectB4ADependsOn</code>, or <code>#ProjectB4iDependsOn</code>). B4XLib and B4XPPLib dependencies stay in their dedicated text boxes.</div>
-  </section>
-  <section>
-    <h2>Library directories</h2>
-    <p class="hint">Use the real B4X model: each platform has internal and additional library folders. <code>.jar + .xml</code>, <code>.b4xlib</code> and <code>.b4xpplib</code> are read from these same folders. For B4XLib projects, B4X++ loads the platforms declared by <code>#B4XLibSupportedPlatforms</code> or inferred from platform-specific B4XLib dependency directives.</p>
-    <div class="libs">
-      ${renderPlatformLibraryBox('b4j', 'B4J', safeState)}
-      ${renderPlatformLibraryBox('b4a', 'B4A', safeState)}
-      ${renderPlatformLibraryBox('b4i', 'B4i', safeState)}
-    </div>
-  </section>
-</main>
-<div id="saveStatus" class="hint" style="padding:0 22px 8px;text-align:right"></div>
-<div class="actions">
-  <button type="button" class="secondary" id="reload">Reload</button>
-  <button type="button" class="secondary" id="openJson">Open settings.json</button>
-  <button type="button" id="save">Save and refresh index</button>
-</div>
-<textarea id="b4xpp-state-json" hidden>${escapeHtml(json)}</textarea>
-<script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
+<section><h2>Project folders and defaults</h2><div class="grid">
+<div><label>Source folder</label><input data-key="sourceDir" type="text" value="${valueAttr('sourceDir')}"></div>
+<div><label>Generated .bas folder</label><input data-key="outputDir" type="text" value="${valueAttr('outputDir')}"></div>
+<div><label>B4X IDE projects folder</label><input data-key="projectDir" type="text" value="${valueAttr('projectDir')}"></div>
+<div><label>B4XLib output folder</label><input data-key="b4xlibDir" type="text" value="${valueAttr('b4xlibDir')}"></div>
+<div><label>B4XPPLib output folder</label><input data-key="b4xpplibDir" type="text" value="${valueAttr('b4xpplibDir')}"></div>
+<div><label>Default package name</label><input data-key="packageName" type="text" value="${valueAttr('packageName')}"></div>
+<div><label>Fallback platform</label><select data-key="platform"><option value="auto"${selectAttr('platform','auto')}>auto</option><option value="b4j"${selectAttr('platform','b4j')}>B4J</option><option value="b4a"${selectAttr('platform','b4a')}>B4A</option><option value="b4i"${selectAttr('platform','b4i')}>B4i</option><option value="banano"${selectAttr('platform','banano')}>BANano</option></select></div>
+<div><label>Build configuration</label><input data-key="buildConfiguration" type="text" value="${valueAttr('buildConfiguration')}"></div>
+</div><div class="checks"><label class="check"><input data-key="addGeneratedHeader" type="checkbox"${checkedAttr('addGeneratedHeader')}> Add generated header</label><label class="check"><input data-key="overwriteGeneratedFiles" type="checkbox"${checkedAttr('overwriteGeneratedFiles')}> Overwrite generated files</label></div></section>
+<section><h2>B4X++ toolchain settings</h2><p class="hint">Library folders, B4JBuilder/B4ABuilder paths, Java/JavaFX and BANano local server are shared by all projects.</p><button type="button" id="openGlobalSettings">Open B4X++ Settings</button></section>
+<section><h2>Project directives in <code>.bx</code></h2><p class="small">These fields are written back as directives at the top of the selected/main <code>.bx</code> file.</p><div class="grid">
+<div><label>Main .bx file</label><input data-dir-key="mainBxPath" type="text" value="${dirValueAttr('mainBxPath')}"></div>
+<div><label>#Project platform</label><input data-dir-key="projectPlatform" type="text" value="${dirValueAttr('projectPlatform')}"></div>
+<div><label>#Project name</label><input data-dir-key="projectName" type="text" value="${dirValueAttr('projectName')}"></div>
+<div><label>#Package</label><input data-dir-key="packageName" type="text" value="${dirValueAttr('packageName')}"></div>
+<div><label>#ProjectDir</label><input data-dir-key="projectDir" type="text" value="${dirValueAttr('projectDir')}"></div>
+<div><label>#MainModule</label><input data-dir-key="mainModule" type="text" value="${dirValueAttr('mainModule')}"></div>
+</div><div class="grid">
+<div><label>#ProjectDependsOn</label><textarea id="dir_projectDependsOn" data-dir-array="projectDependsOn" spellcheck="false">${dirArrayTextarea('projectDependsOn')}</textarea></div>
+<div><label>#ProjectB4JDependsOn</label><textarea id="dir_projectB4JDependsOn" data-dir-array="projectB4JDependsOn" spellcheck="false">${dirArrayTextarea('projectB4JDependsOn')}</textarea></div>
+<div><label>#ProjectB4ADependsOn</label><textarea id="dir_projectB4ADependsOn" data-dir-array="projectB4ADependsOn" spellcheck="false">${dirArrayTextarea('projectB4ADependsOn')}</textarea></div>
+<div><label>#ProjectB4iDependsOn</label><textarea id="dir_projectB4iDependsOn" data-dir-array="projectB4iDependsOn" spellcheck="false">${dirArrayTextarea('projectB4iDependsOn')}</textarea></div>
+</div></section>
+<section><h2>B4XLib metadata</h2><div class="grid"><div><label>#B4XLib</label><input data-dir-key="b4xLib" type="text" value="${dirValueAttr('b4xLib')}"></div><div><label>#B4XLibDir</label><input data-dir-key="b4xLibDir" type="text" value="${dirValueAttr('b4xLibDir')}"></div><div><label>#B4XLibVersion</label><input data-dir-key="b4xLibVersion" type="text" value="${dirValueAttr('b4xLibVersion')}"></div><div><label>#B4XLibAuthor</label><input data-dir-key="b4xLibAuthor" type="text" value="${dirValueAttr('b4xLibAuthor')}"></div></div><label>#B4XLibSupportedPlatforms</label><div class="pillgrid"><label class="pill"><input type="checkbox" data-platform-choice="B4J"${platformChecked('B4J')}> B4J</label><label class="pill"><input type="checkbox" data-platform-choice="B4A"${platformChecked('B4A')}> B4A</label><label class="pill"><input type="checkbox" data-platform-choice="B4i"${platformChecked('B4i')}> B4i</label></div><div class="grid"><div><label>#B4XLibDependsOn</label><textarea id="dir_b4xLibDependsOn" data-dir-array="b4xLibDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibDependsOn')}</textarea></div><div><label>#B4XLibB4JDependsOn</label><textarea id="dir_b4xLibB4JDependsOn" data-dir-array="b4xLibB4JDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4JDependsOn')}</textarea></div><div><label>#B4XLibB4ADependsOn</label><textarea id="dir_b4xLibB4ADependsOn" data-dir-array="b4xLibB4ADependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4ADependsOn')}</textarea></div><div><label>#B4XLibB4iDependsOn</label><textarea id="dir_b4xLibB4iDependsOn" data-dir-array="b4xLibB4iDependsOn" spellcheck="false">${dirArrayTextarea('b4xLibB4iDependsOn')}</textarea></div></div></section>
+<section><h2>B4XPPLib source packages</h2><div class="grid"><div><label>#B4XPPLib</label><input data-dir-key="b4xppLib" type="text" value="${dirValueAttr('b4xppLib')}"></div><div><label>#B4XPPLibDir</label><input data-dir-key="b4xppLibDir" type="text" value="${dirValueAttr('b4xppLibDir')}"></div><div><label>#B4XPPLibVersion</label><input data-dir-key="b4xppLibVersion" type="text" value="${dirValueAttr('b4xppLibVersion')}"></div><div><label>#B4XPPLibAuthor</label><input data-dir-key="b4xppLibAuthor" type="text" value="${dirValueAttr('b4xppLibAuthor')}"></div><div><label>#B4XPPLibSupportedPlatforms</label><textarea id="dir_b4xppLibSupportedPlatforms" data-dir-array="b4xppLibSupportedPlatforms" spellcheck="false">${dirArrayTextarea('b4xppLibSupportedPlatforms')}</textarea></div><div><label>#B4XPPLibDependsOn</label><textarea id="dir_b4xppLibDependsOn" data-dir-array="b4xppLibDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibDependsOn')}</textarea></div><div><label>#B4XPPLibB4JDependsOn</label><textarea id="dir_b4xppLibB4JDependsOn" data-dir-array="b4xppLibB4JDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4JDependsOn')}</textarea></div><div><label>#B4XPPLibB4ADependsOn</label><textarea id="dir_b4xppLibB4ADependsOn" data-dir-array="b4xppLibB4ADependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4ADependsOn')}</textarea></div><div><label>#B4XPPLibB4iDependsOn</label><textarea id="dir_b4xppLibB4iDependsOn" data-dir-array="b4xppLibB4iDependsOn" spellcheck="false">${dirArrayTextarea('b4xppLibB4iDependsOn')}</textarea></div></div></section>
+<section><h2>Available libraries</h2><p class="hint">Loaded from global B4X++ library folders. Checking an item adds a dependency directive to this project.</p><button type="button" class="secondary" id="reloadLibraries">Reload libraries from B4X++ Settings</button><label>Available libraries for the active platform(s)</label><div id="availableLibraries" class="liblist"><span class="small">No library index loaded yet.</span></div></section>
+</main><div id="saveStatus" class="hint" style="padding:0 22px 8px;text-align:right"></div><div class="actions"><button type="button" class="secondary" id="reload">Reload</button><button type="button" class="secondary" id="openJson">Open project settings.json</button><button type="button" id="save">Save project settings and directives</button></div><textarea id="b4xpp-state-json" hidden>${escapeHtml(json)}</textarea><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
 }
 
 function renderPlatformLibraryBox(platform, label, state) {
@@ -955,9 +1343,12 @@ function transpileWorkspace(root, config) {
     workspaceRoot: root,
     fileTextOverrides: collectOpenB4XPPTextOverrides(sourceRoot)
   });
+  // v0.5.4: keep one normalized source list for diagnostics and command results.
+  // Sync #Project previously referenced uniqueFiles without defining it.
+  const uniqueFiles = uniqueFilePaths(result.files || files).sort((a, b) => a.localeCompare(b));
 
   const allDiagnostics = new Map();
-  for (const file of files) {
+  for (const file of uniqueFiles) {
     const key = path.resolve(file);
     allDiagnostics.set(vscode.Uri.file(file).toString(), result.diagnosticsByPath.get(key) || []);
   }
@@ -978,7 +1369,7 @@ function transpileWorkspace(root, config) {
   }
 
   return {
-    files: result.files || files,
+    files: uniqueFiles,
     includedFiles: result.includedFiles || [],
     outputs,
     allDiagnostics,
@@ -1074,6 +1465,7 @@ async function createIdeProjectCommand() {
   const platform = await vscode.window.showQuickPick([
     { label: 'B4J Non-UI / Console', description: '.b4j - recommended for testing B4X++ OOP', value: 'b4j-nonui' },
     { label: 'B4J UI / JavaFX', description: '.b4j - empty JavaFX window if your code does not load a layout', value: 'b4j-ui' },
+    { label: 'BANano Web / PWA', description: '.b4j - generates a BANano project that transpiles to HTML/CSS/JS', value: 'banano' },
     { label: 'B4A Android', description: '.b4a - creates the Main Activity + .bas modules', value: 'b4a' },
     { label: 'B4i iOS', description: '.b4i - creates the main Application_Start module + .bas modules', value: 'b4i' }
   ], {
@@ -1244,7 +1636,8 @@ function makeProjectConfigWithPackageNativeDeps(config, project, result) {
     projectDependsOn: uniqueStrings([...(project.dependsOn || []), ...nativeDeps.common]),
     projectB4ADependsOn: uniqueStrings([...(project.b4aDependsOn || []), ...nativeDeps.b4a]),
     projectB4JDependsOn: uniqueStrings([...(project.b4jDependsOn || []), ...nativeDeps.b4j]),
-    projectB4iDependsOn: uniqueStrings([...(project.b4iDependsOn || []), ...nativeDeps.b4i])
+    projectB4iDependsOn: uniqueStrings([...(project.b4iDependsOn || []), ...nativeDeps.b4i]),
+    banano: project.banano || config.banano || {}
   };
 }
 
@@ -1515,6 +1908,49 @@ function collectBxFiles(dir) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
+function collectNativeB4XCodeFiles(root, config = {}) {
+  const out = [];
+  const skipNames = new Set(['.git', '.svn', '.hg', '.vscode', 'node_modules', '.b4xpp']);
+  const skipAbs = new Set();
+  for (const rel of [config.outputDir || 'generated-b4x']) {
+    if (!rel) continue;
+    try { skipAbs.add(path.resolve(root, rel)); } catch {}
+  }
+  const visit = (dir, depth = 0) => {
+    if (!dir || depth > 12) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (skipNames.has(entry.name)) continue;
+        const resolved = path.resolve(full);
+        let skipped = false;
+        for (const skip of skipAbs) {
+          if (samePath(resolved, skip) || resolved.startsWith(skip + path.sep)) { skipped = true; break; }
+        }
+        if (!skipped) visit(full, depth + 1);
+      } else if (entry.isFile() && /\.bas$/i.test(entry.name)) {
+        out.push(full);
+      }
+    }
+  };
+  visit(root, 0);
+  return uniqueFilePaths(out);
+}
+
+function uniqueFilePaths(files) {
+  const seen = new Set();
+  const out = [];
+  for (const file of files || []) {
+    const key = normalizePathKey(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(file);
+  }
+  return out;
+}
+
 async function createExampleCommand() {
   const folder = getWorkspaceFolder();
   if (!folder) {
@@ -1551,8 +1987,13 @@ async function createExampleCommand() {
       value: 'breakout-to-src'
     },
     {
+      label: 'BANanoSkeleton web sample',
+      description: `Copy into ${config.sourceDir}/ and open Demo.bx`,
+      value: 'banano-to-src'
+    },
+    {
       label: 'Create all GitHub examples',
-      description: 'Copy basic-animal, language-showcase, closure-console, oop-dungeon-arena and xui-breakout under examples/',
+      description: 'Copy basic-animal, language-showcase, closure-console, oop-dungeon-arena, xui-breakout and banano-skeleton under examples/',
       value: 'both-to-examples'
     }
   ], {
@@ -1567,6 +2008,7 @@ async function createExampleCommand() {
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'closure-console', config.sourceDir), getClosureConsoleTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'oop-dungeon-arena', config.sourceDir), getDungeonArenaTemplate(), root);
     await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'xui-breakout', config.sourceDir), getBreakoutTemplate(), root);
+    await writeExampleTemplateWithPrompt(path.join(examplesRoot, 'banano-skeleton', config.sourceDir), getBananoSkeletonTemplate(), root);
     const readmePath = path.join(examplesRoot, 'README.md');
     if (!fs.existsSync(readmePath)) fs.writeFileSync(readmePath, getExamplesReadme(), 'utf8');
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(readmePath));
@@ -1583,13 +2025,16 @@ async function createExampleCommand() {
         ? getDungeonArenaTemplate()
         : choice.value === 'breakout-to-src'
           ? getBreakoutTemplate()
-          : getBasicAnimalTemplate();
+          : choice.value === 'banano-to-src'
+            ? getBananoSkeletonTemplate()
+            : getBasicAnimalTemplate();
   const sourceRoot = path.join(root, config.sourceDir);
   await writeExampleTemplateWithPrompt(sourceRoot, template, root);
   const demoPath = path.join(sourceRoot, 'Demo.bx');
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(demoPath));
   await vscode.window.showTextDocument(doc);
-  vscode.window.showInformationMessage(`B4X++: ${template.name} created in ${config.sourceDir}. Run "B4X++: Sync #Project" or "B4X++: Build .b4xlib".`);
+  const nextStep = choice.value === 'banano-to-src' ? 'Run "B4X++: Sync #Project", then open the generated .b4j in B4J and Run it to generate Objects/<AppName>/index.html + app.js.' : 'Run "B4X++: Sync #Project" or "B4X++: Build .b4xlib".';
+  vscode.window.showInformationMessage(`B4X++: ${template.name} created in ${config.sourceDir}. ${nextStep}`);
 }
 
 async function writeExampleTemplateWithPrompt(targetSourceRoot, template, workspaceRoot) {
@@ -2124,6 +2569,70 @@ End Class
   };
 }
 
+
+function getBananoSkeletonTemplate() {
+  return {
+    name: 'BANanoSkeleton web sample',
+    files: {
+      'Demo.bx': `#Project BANano B4XPPBananoSkeletonHello
+#Package b4xpp.examples.banano
+#ProjectDir b4x-ide-projects/B4XPPBananoSkeletonHello-banano
+#MainModule Main
+
+#ProjectB4JDependsOn BANano
+#ProjectB4JDependsOn BANanoSkeleton
+#BANanoApp B4XPPBananoSkeletonHello
+#BANanoTitle "B4X++ BANanoSkeleton"
+
+Sub Process_Globals
+    Private BANano As BANano 'ignore
+End Sub
+
+Sub AppStart (Form1 As Form, Args() As String)
+    BANano.Initialize("BANano", "B4XPPBananoSkeletonHello", 1)
+    BANano.Header.Title = "B4X++ BANanoSkeleton"
+    BANano.JAVASCRIPT_NAME = "app.js"
+    BANano.TranspilerOptions.MergeAllCSSFiles = True
+    BANano.TranspilerOptions.MergeAllJavascriptFiles = True
+    BANano.TranspilerOptions.RemoveDeadCode = False
+    BANano.TranspilerOptions.ShowWarningDeadCode = True
+
+    ' BANanoSkeleton theme / assets
+    SKTools.WriteTheme
+
+    ' BANano transpiles the B4J project into Objects/B4XPPBananoSkeletonHello/index.html + app.js.
+    BANano.Build(File.DirApp)
+
+    #If Release
+    ExitApplication
+    #End If
+End Sub
+
+Sub BANano_Ready()
+    Dim body As BANanoElement
+    body.Initialize("#body")
+    body.Append($"<div class="container" style="margin-top: 32px;">
+<h1>B4X++ + BANanoSkeleton</h1>
+<p>This page was generated from a .bx source, compiled as B4J, then transpiled by BANano to HTML/CSS/JS.</p>
+<button class="button-primary">Hello BANano</button>
+</div>"$)
+
+    ' Native BANano.Await must stay untouched by B4X++ Async/Await transformation.
+    Dim indexTextProm As BANanoPromise = BANano.GetFileAsText("./index.html", Null, "UTF-8")
+    Dim indexText As String = BANano.Await(indexTextProm)
+    Log("Loaded index.html chars: " & indexText.Length)
+End Sub
+
+#If CSS
+body {
+    background: #f6f8fb;
+}
+#End If
+`
+    }
+  };
+}
+
 function getBasicAnimalTemplate() {
   return {
     name: 'Basic Animal OOP sample',
@@ -2482,6 +2991,7 @@ function platformKeyFromIdePlatform(platform) {
   const p = String(platform || '').toLowerCase();
   if (p.includes('b4a')) return 'b4a';
   if (p.includes('b4i')) return 'b4i';
+  if (p.includes('banano')) return 'b4j';
   if (p.includes('b4j')) return 'b4j';
   return 'b4j';
 }
@@ -2497,6 +3007,9 @@ function getLibraryDirsForPlatformKey(config, platformKey) {
   if (platformKey === 'b4j') dirs.push(...arr('b4jInternalLibraryDirs', 'b4j.internalLibraryDirs'), ...arr('b4jAdditionalLibraryDirs', 'b4j.additionalLibraryDirs'));
   else if (platformKey === 'b4a') dirs.push(...arr('b4aInternalLibraryDirs', 'b4a.internalLibraryDirs'), ...arr('b4aAdditionalLibraryDirs', 'b4a.additionalLibraryDirs'));
   else if (platformKey === 'b4i') dirs.push(...arr('b4iInternalLibraryDirs', 'b4i.internalLibraryDirs'), ...arr('b4iAdditionalLibraryDirs', 'b4i.additionalLibraryDirs'));
+  const folder = getWorkspaceFolder();
+  const rootPath = folder && folder.uri && folder.uri.fsPath;
+  dirs.push(...autoLibraryDirsForPlatform(platformKey, c, rootPath));
   dirs.push(...arr('b4xppBundledLibraryDirs', 'b4xpp.bundledLibraryDirs'), ...arr('b4xpplibBundledLibraryDirs', 'b4xpplib.bundledLibraryDirs'));
   if (!dirs.length || !(c.b4xppBundledLibraryDirs || c.b4xpplibBundledLibraryDirs)) dirs.push(...getBundledB4XPPLibDirs());
   return uniqueStrings(normalizeDirectoryList(dirs));
@@ -2534,11 +3047,11 @@ function filterNativeProjectLibraries(platform, config, libraries) {
 function getProjectLibraries(platform, config, baseLibraries) {
   let platformSpecific = [];
   if (platform === 'b4a') platformSpecific = Array.isArray(config.projectB4ADependsOn) ? config.projectB4ADependsOn : [];
-  else if (platform === 'b4j-ui' || platform === 'b4j-nonui') platformSpecific = Array.isArray(config.projectB4JDependsOn) ? config.projectB4JDependsOn : [];
+  else if (platform === 'b4j-ui' || platform === 'b4j-nonui' || platform === 'banano') platformSpecific = Array.isArray(config.projectB4JDependsOn) ? config.projectB4JDependsOn : [];
   else if (platform === 'b4i') platformSpecific = Array.isArray(config.projectB4iDependsOn) ? config.projectB4iDependsOn : [];
 
   let common = Array.isArray(config.projectDependsOn) ? config.projectDependsOn : [];
-  if ((platform === 'b4j-ui' || platform === 'b4j-nonui') && platformSpecific.some(v => /^jxui$/i.test(v))) {
+  if ((platform === 'b4j-ui' || platform === 'b4j-nonui' || platform === 'banano') && platformSpecific.some(v => /^jxui$/i.test(v))) {
     common = common.filter(v => !/^xui$/i.test(v));
   }
   if (platform === 'b4i' && platformSpecific.some(v => /^ixui$/i.test(v))) {
@@ -2557,7 +3070,19 @@ function writeIdeProject(projectRoot, platform, projectName, packageName, output
   let writtenModules;
   let label;
 
-  if (platform === 'b4j-nonui') {
+  if (platform === 'banano') {
+    projectFileName = `${projectName}.b4j`;
+    label = 'BANano Web / PWA';
+    writtenModules = writeModuleOutputs(projectRoot, moduleOutputs, 'b4j-ui');
+    const mainBody = mainOutput ? stripGeneratedHeader(mainOutput.content) : getDefaultBANanoMain(projectName, config && config.banano);
+    projectContent = makeB4JProject({
+      appType: 'JavaFX',
+      packageName,
+      libraries: getProjectLibraries(platform, config, ['jcore', 'jfx', 'BANano', 'BANanoSkeleton']),
+      modules: writtenModules.map(m => m.moduleName),
+      mainBody: ensureBANanoMain(mainBody, projectName, config && config.banano)
+    });
+  } else if (platform === 'b4j-nonui') {
     projectFileName = `${projectName}.b4j`;
     label = 'B4J Non-UI';
     writtenModules = writeModuleOutputs(projectRoot, moduleOutputs, platform);
@@ -2908,6 +3433,70 @@ function injectAfterAppStart(text, linesToInject) {
   return text.replace(match[0], match[0] + insert + '\n');
 }
 
+
+function getDefaultBANanoMain(projectName, bananoOptions = {}) {
+  const appName = sanitizeProjectName((bananoOptions && (bananoOptions.app || bananoOptions.name)) || projectName) || 'B4XPPBANanoApp';
+  const title = String((bananoOptions && bananoOptions.title) || 'B4X++ BANanoSkeleton').replace(/"/g, '\\"');
+  return `Sub Process_Globals
+    Private BANano As BANano 'ignore
+End Sub
+
+Sub AppStart (Form1 As Form, Args() As String)
+    BANano.Initialize("BANano", "${appName}", 1)
+    BANano.Header.Title = "${title}"
+    BANano.JAVASCRIPT_NAME = "app.js"
+    BANano.TranspilerOptions.MergeAllCSSFiles = True
+    BANano.TranspilerOptions.MergeAllJavascriptFiles = True
+    BANano.TranspilerOptions.RemoveDeadCode = False
+    SKTools.WriteTheme
+    BANano.Build(File.DirApp)
+    #If Release
+    ExitApplication
+    #End If
+End Sub
+
+Sub BANano_Ready()
+    Dim body As BANanoElement
+    body.Initialize("#body")
+    body.Append($"<div class="container" style="margin-top: 32px;">
+<h1>B4X++ + BANanoSkeleton</h1>
+<p>If you can see this page, B4X++ generated a working BANano B4J project.</p>
+<button class="button-primary">Hello BANano</button>
+</div>"$)
+    Log("B4X++ BANano app is ready")
+End Sub
+`;
+}
+
+function ensureBANanoMain(body, projectName, bananoOptions = {}) {
+  let text = body.trim() || getDefaultBANanoMain(projectName, bananoOptions);
+  text = text.replace(/Sub\s+AppStart\s*\(\s*Args\s*\(\)\s+As\s+String\s*\)/i, 'Sub AppStart (Form1 As Form, Args() As String)');
+  text = ensureProcessGlobalsLine(text, "Private BANano As BANano 'ignore");
+  if (!/Sub\s+BANano_Ready\s*\(/i.test(text)) {
+    text += `
+
+Sub BANano_Ready()
+    Log("BANano app ready")
+End Sub`;
+  }
+  if (!/Application_Error\s*\(/i.test(text)) {
+    text += `
+
+'Return true to allow the default exceptions handler to handle the uncaught exception.
+Sub Application_Error (Error As Exception, StackTrace As String) As Boolean
+    Return True
+End Sub`;
+  }
+  return `#Region Project Attributes
+    #MainFormWidth: 320
+    #MainFormHeight: 240
+    #MergeLibraries: True
+#End Region
+
+${text.trim()}
+`;
+}
+
 function getDefaultB4JNonUiMain() {
   return `Sub Process_Globals
 End Sub
@@ -2928,13 +3517,19 @@ End Sub
 }
 
 function getGeneratedProjectReadme(label, projectFileName) {
+  const bananoNote = /BANano/i.test(label || '') ? `
+BANano note:
+- Make sure BANano and BANanoSkeleton are installed in the B4J Additional Libraries folder.
+- Run the generated .b4j project from B4J. BANano.Build(File.DirApp) will transpile the app to Objects/<AppName>/ with index.html, CSS and JavaScript files.
+- Serve the generated Objects/<AppName>/ folder with "B4X++: Serve BANano Output" for browser features that do not work from file://.
+` : '';
   return `${label} project generated by B4X++.
 
 1. Open ${projectFileName} in the matching B4X IDE.
 2. Do not edit generated .bas modules directly if you want to keep the B4X++ workflow.
 3. Edit the .bx sources in src-b4xpp, then preferably run "B4X++: Sync #Project" when your .bx file contains a #Project directive.
 4. "B4X++: Generate .bas Files" is still available for generated-b4x inspection, but that folder is not the one used by the B4X IDE project.
-
+${bananoNote}
 Note: this project generator is a starter. Designer files, layouts, icons and advanced platform settings should still be adjusted in the B4X IDE.
 `;
 }
@@ -3272,17 +3867,19 @@ function buildB4XPPSymbolIndex(document) {
   let files = [];
   if (fs.existsSync(sourceRoot)) files = collectBxFiles(sourceRoot);
   if (!files.some(f => samePath(f, document.uri.fsPath))) files.push(document.uri.fsPath);
+  // v0.5.4: definition/index provider also needs a real unique file list.
+  const uniqueFiles = uniqueFilePaths(files).sort((a, b) => a.localeCompare(b));
 
   const index = {
     root,
     sourceRoot,
-    files,
+    files: uniqueFiles,
     classes: new Map(),
     interfaces: new Map(),
     fileInfos: new Map()
   };
 
-  for (const file of files) {
+  for (const file of uniqueFiles) {
     try {
       const text = getWorkspaceText(file);
       const info = parseB4XPPSymbolFile(file, text);
@@ -3592,6 +4189,9 @@ function resolveMemberDefinition(index, fileInfo, position, receiver, member) {
 function collectVariablesForScope(index, fileInfo, line) {
   const variables = new Map();
   if (!fileInfo) return variables;
+  if (fileInfo.moduleFields) {
+    for (const field of fileInfo.moduleFields.values()) variables.set(field.name.toLowerCase(), { ...field, assignedType: null });
+  }
   const cls = findClassAtPosition(index, fileInfo, line);
 
   if (cls) {
@@ -3835,6 +4435,176 @@ async function generateDebugBundleCommand() {
 }
 
 
+
+async function serveBananoOutputCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const config = getConfig();
+  const outDir = findBestBANanoOutputDir(root, config);
+  if (!outDir) {
+    const choice = await vscode.window.showWarningMessage(
+      'B4X++: no generated BANano index.html found. Compile / run the generated .b4j project first so BANano creates Objects/<AppName>/index.html.',
+      'Sync #Project', 'Cancel'
+    );
+    if (choice === 'Sync #Project') vscode.commands.executeCommand('b4xpp.syncDirectiveProject');
+    return;
+  }
+  try {
+    const info = await startBANanoStaticServer(outDir, config.bananoServerPort || 8088);
+    b4xppOutputChannel.appendLine(`B4X++ BANano server: ${info.url}`);
+    b4xppOutputChannel.appendLine(`Serving: ${outDir}`);
+    b4xppOutputChannel.show(true);
+    if (config.bananoServerOpenBrowser !== false) await vscode.env.openExternal(vscode.Uri.parse(info.url));
+    vscode.window.showInformationMessage(`B4X++: BANano served at ${info.url}`);
+  } catch (err) {
+    vscode.window.showErrorMessage(`B4X++ BANano server failed: ${err && err.message ? err.message : String(err)}`);
+  }
+}
+
+function findBestBANanoOutputDir(root, config) {
+  const candidates = [];
+  try {
+    const result = transpileWorkspace(root, config);
+    if (result && result.project && /banano/i.test(result.project.platform || '')) {
+      const projectName = sanitizeProjectName(result.project.name) || sanitizeProjectName(path.basename(root)) || 'B4XPPDemo';
+      const projectRoot = resolveConfiguredIdeProjectDir(root, config, result.project.projectDir, projectName, result.project.platform);
+      const appName = sanitizeProjectName(result.project.banano && (result.project.banano.app || result.project.banano.name)) || projectName;
+      candidates.push(path.join(projectRoot, 'Objects', appName));
+      candidates.push(path.join(projectRoot, 'Objects'));
+    }
+  } catch {}
+
+  const active = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document && vscode.window.activeTextEditor.document.uri.fsPath;
+  if (active) {
+    const activeDir = fs.existsSync(active) && fs.statSync(active).isDirectory() ? active : path.dirname(active);
+    candidates.push(activeDir);
+    candidates.push(path.join(activeDir, 'Objects'));
+    const projectRoot = findNearestDirectoryContaining(activeDir, /\.b4j$/i, 5);
+    if (projectRoot) candidates.push(path.join(projectRoot, 'Objects'));
+  }
+
+  candidates.push(...findFilesRecursive(root, /^index\.html$/i, ['.git', 'node_modules', '.vscode', 'AutoBackups'])
+    .filter(f => /[\\/]Objects[\\/]/i.test(f))
+    .map(f => path.dirname(f))
+  );
+
+  const scored = uniqueStrings(candidates).filter(dir => {
+    try { return fs.existsSync(path.join(dir, 'index.html')); } catch { return false; }
+  }).map(dir => ({ dir, score: scoreBANanoOutputDir(root, dir) }));
+  scored.sort((a, b) => b.score - a.score || a.dir.length - b.dir.length);
+  return scored[0] && scored[0].dir;
+}
+
+function scoreBANanoOutputDir(root, dir) {
+  let score = 0;
+  const rel = path.relative(root, dir).replace(/\\/g, '/');
+  if (/b4x-ide-projects/i.test(rel)) score += 20;
+  if (/Objects\//i.test(rel) || /Objects$/i.test(rel)) score += 30;
+  if (/banano/i.test(rel)) score += 10;
+  if (fs.existsSync(path.join(dir, 'app.js'))) score += 10;
+  if (fs.existsSync(path.join(dir, 'manifest.json'))) score += 5;
+  return score;
+}
+
+function findNearestDirectoryContaining(startDir, fileRegex, maxLevels) {
+  let dir = startDir;
+  for (let i = 0; i <= maxLevels; i++) {
+    try {
+      const entries = fs.readdirSync(dir);
+      if (entries.some(e => fileRegex.test(e))) return dir;
+    } catch {}
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return '';
+}
+
+function startBANanoStaticServer(rootDir, preferredPort) {
+  const root = path.resolve(rootDir);
+  if (bananoStaticServer && bananoStaticServerInfo && bananoStaticServerInfo.root === root) {
+    return Promise.resolve(bananoStaticServerInfo);
+  }
+  if (bananoStaticServer) {
+    try { bananoStaticServer.close(); } catch {}
+    bananoStaticServer = null;
+    bananoStaticServerInfo = null;
+  }
+  const portStart = Number(preferredPort) || 8088;
+  return new Promise((resolve, reject) => {
+    const tryPort = (port, attemptsLeft) => {
+      const server = http.createServer((req, res) => serveStaticRequest(root, req, res));
+      server.on('error', (err) => {
+        if (err && err.code === 'EADDRINUSE' && attemptsLeft > 0) return tryPort(port + 1, attemptsLeft - 1);
+        reject(err);
+      });
+      server.listen(port, '127.0.0.1', () => {
+        bananoStaticServer = server;
+        bananoStaticServerInfo = { root, port, url: `http://127.0.0.1:${port}/index.html` };
+        resolve(bananoStaticServerInfo);
+      });
+    };
+    tryPort(portStart, 30);
+  });
+}
+
+function serveStaticRequest(root, req, res) {
+  try {
+    const parsed = new URL(req.url || '/', 'http://127.0.0.1');
+    let pathname = decodeURIComponent(parsed.pathname || '/');
+    if (pathname === '/') pathname = '/index.html';
+    const file = path.resolve(root, '.' + pathname.replace(/\//g, path.sep));
+    const rootNorm = process.platform === 'win32' ? root.toLowerCase() : root;
+    const fileNorm = process.platform === 'win32' ? file.toLowerCase() : file;
+    if (!(fileNorm === rootNorm || fileNorm.startsWith(rootNorm + path.sep))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Forbidden');
+      return;
+    }
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': mimeTypeForFile(file),
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(data);
+    });
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(String(err && err.message ? err.message : err));
+  }
+}
+
+function mimeTypeForFile(file) {
+  const ext = path.extname(file).toLowerCase();
+  return {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.wasm': 'application/wasm',
+    '.map': 'application/json; charset=utf-8',
+    '.txt': 'text/plain; charset=utf-8'
+  }[ext] || 'application/octet-stream';
+}
+
 async function buildNativeB4XWithRemapCommand(platformRequest = 'auto') {
   const folder = getWorkspaceFolder();
   if (!folder) {
@@ -3846,7 +4616,7 @@ async function buildNativeB4XWithRemapCommand(platformRequest = 'auto') {
   const prepared = await prepareNativeB4XProjectForBuild(root, config, platformRequest);
   if (!prepared) return;
 
-  const { platform, projectFile, projectRoot, result } = prepared;
+  const { platform, projectFile, projectRoot, result, isBanano } = prepared;
   const buildPlan = await createNativeB4XBuildPlan(platform, projectFile, projectRoot, config, root);
   if (!buildPlan) return;
 
@@ -3859,7 +4629,7 @@ async function buildNativeB4XWithRemapCommand(platformRequest = 'auto') {
   b4xppOutputChannel.appendLine('');
   b4xppOutputChannel.show(true);
 
-  runNativeB4XBuildProcess(root, buildPlan, platform);
+  runNativeB4XBuildProcess(root, buildPlan, platform, { projectFile, projectRoot, result, isBanano, config });
 }
 
 // Kept as a compatibility shim for older keybindings / command ids.
@@ -3904,7 +4674,7 @@ async function prepareNativeB4XProjectForBuild(root, config, platformRequest) {
     const projectConfig = makeProjectConfigWithPackageNativeDeps(config, result.project, result);
     const project = writeIdeProject(projectRoot, result.project.platform, projectName, packageName, result.outputs, projectConfig);
     writeB4XPPMetadata(root, result, projectRoot);
-    return { platform: projectPlatform, projectFile: project.filePath, projectRoot, result };
+    return { platform: projectPlatform, projectFile: project.filePath, projectRoot, result, isBanano: isBANanoProjectResult(result) };
   }
 
   const platform = requested === 'auto' ? await askForNativePlatform() : requested;
@@ -3931,19 +4701,13 @@ async function pickExistingNativeProject(root, platform) {
   }
   const picked = projectFiles.length === 1 ? projectFiles[0] : await pickFile(root, projectFiles, `B4X++: choose the .${ext} project to build`);
   if (!picked) return null;
-  return { platform, projectFile: picked, projectRoot: path.dirname(picked), result: null };
+  return { platform, projectFile: picked, projectRoot: path.dirname(picked), result: null, isBanano: isExistingB4JProjectBANano(picked) };
 }
 
 async function createNativeB4XBuildPlan(platform, projectFile, projectRoot, config, workspaceRoot) {
   const customCommand = getCustomBuildCommandForPlatform(platform, config);
   if (customCommand && customCommand.trim()) {
-    const command = expandBuildCommandPlaceholders(customCommand, projectFile, path.dirname(projectFile), workspaceRoot, config);
-    return {
-      mode: 'shell',
-      command,
-      cwd: path.dirname(projectFile),
-      displayCommand: command
-    };
+    return createCustomNativeBuildPlan(customCommand, projectFile, path.dirname(projectFile), workspaceRoot, config, platform);
   }
 
   const builder = resolveBuilderPathForPlatform(platform, config);
@@ -3957,11 +4721,7 @@ async function createNativeB4XBuildPlan(platform, projectFile, projectRoot, conf
     return null;
   }
 
-  const args = [`-Task=${config.buildTask || 'Build'}`];
-  args.push(`-Project=${projectFile}`);
-  if (config.buildUseBaseFolder !== false) args.push(`-BaseFolder=${path.dirname(projectFile)}`);
-  if (config.buildConfiguration) args.push(`-Configuration=${config.buildConfiguration}`);
-  if (config.buildShowWarnings !== false) args.push('-ShowWarnings=True');
+  const args = createOfficialB4XBuilderArgs(projectFile, config);
 
   return {
     mode: 'spawn',
@@ -3972,7 +4732,101 @@ async function createNativeB4XBuildPlan(platform, projectFile, projectRoot, conf
   };
 }
 
-function runNativeB4XBuildProcess(root, buildPlan, platform) {
+function createOfficialB4XBuilderArgs(projectFile, config) {
+  const args = [`-Task=${config.buildTask || 'Build'}`];
+  args.push(`-Project=${projectFile}`);
+  if (config.buildUseBaseFolder !== false) args.push(`-BaseFolder=${path.dirname(projectFile)}`);
+  if (config.buildConfiguration) args.push(`-Configuration=${config.buildConfiguration}`);
+  if (config.buildShowWarnings !== false) args.push('-ShowWarnings=True');
+  return args;
+}
+
+function createCustomNativeBuildPlan(customCommand, projectFile, projectDir, workspaceRoot, config, platform) {
+  const command = expandBuildCommandPlaceholders(customCommand, projectFile, projectDir, workspaceRoot, config);
+  const officialPlan = tryCreateOfficialB4XBuilderPlanFromCustomCommand(command, projectFile, projectDir, config, platform);
+  if (officialPlan) return officialPlan;
+  const spawnPlan = tryCreateSpawnBuildPlanFromCommand(command, projectDir);
+  if (spawnPlan) return spawnPlan;
+  return {
+    mode: 'shell',
+    command,
+    cwd: projectDir,
+    displayCommand: command
+  };
+}
+
+function tryCreateOfficialB4XBuilderPlanFromCustomCommand(command, projectFile, projectDir, config, platform) {
+  const s = String(command || '').trim();
+  if (!s) return null;
+  const parsed = tryCreateSpawnBuildPlanFromCommand(s, projectDir);
+  if (!parsed) return null;
+  const exeName = path.basename(parsed.executable || '').toLowerCase();
+  if (!/b4[aj]builder\.exe$/i.test(exeName)) return null;
+  const hasOfficialFlags = (parsed.args || []).some(a => /^-(?:Task|Project|BaseFolder|ShowWarnings|Configuration)=/i.test(String(a || '')));
+  if (hasOfficialFlags) return parsed;
+  const projectArg = (parsed.args || []).find(a => /\.(?:b4j|b4a)$/i.test(String(a || ''))) || projectFile;
+  const args = createOfficialB4XBuilderArgs(stripWrappingQuotes(projectArg), config);
+  return {
+    mode: 'spawn',
+    executable: parsed.executable,
+    args,
+    cwd: projectDir,
+    displayCommand: [quoteShellPath(parsed.executable), ...args.map(a => quoteBuilderArgForDisplay(a))].join(' ')
+  };
+}
+
+function tryCreateSpawnBuildPlanFromCommand(command, cwd) {
+  const s = String(command || '').trim();
+  if (!s) return null;
+  let executable = '';
+  let rest = '';
+  let m = s.match(/^"([^"]+\.exe)"\s*(.*)$/i);
+  if (m) { executable = m[1]; rest = m[2] || ''; }
+  else {
+    // Accept legacy commands such as:
+    // C:\Program Files\Anywhere Software\B4J\B4JBuilder.exe "project.b4j"
+    // child_process.exec fails on the space in Program Files, but spawn() is fine.
+    m = s.match(/^([A-Za-z]:\\.*?\.exe)\s*(.*)$/i);
+    if (m) { executable = m[1]; rest = m[2] || ''; }
+  }
+  if (!executable) return null;
+  const cleanExe = stripWrappingQuotes(executable);
+  if (!fs.existsSync(cleanExe)) return null;
+  const args = splitCommandLineArgs(rest);
+  return {
+    mode: 'spawn',
+    executable: cleanExe,
+    args,
+    cwd,
+    displayCommand: [quoteShellPath(cleanExe), ...args.map(a => quoteBuilderArgForDisplay(a))].join(' ')
+  };
+}
+
+function splitCommandLineArgs(text) {
+  const args = [];
+  let cur = '';
+  let inQuote = false;
+  let quote = '';
+  let escaped = false;
+  for (const ch of String(text || '')) {
+    if (escaped) { cur += ch; escaped = false; continue; }
+    if (ch === '\\') { cur += ch; continue; }
+    if (inQuote) {
+      if (ch === quote) { inQuote = false; quote = ''; continue; }
+      cur += ch; continue;
+    }
+    if (ch === '"' || ch === "'") { inQuote = true; quote = ch; continue; }
+    if (/\s/.test(ch)) {
+      if (cur) { args.push(cur); cur = ''; }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) args.push(cur);
+  return args;
+}
+
+function runNativeB4XBuildProcess(root, buildPlan, platform, context = {}) {
   const started = Date.now();
   const chunks = [];
   const append = (text) => {
@@ -3986,13 +4840,19 @@ function runNativeB4XBuildProcess(root, buildPlan, platform) {
     const map = loadB4XPPSourceMap(root);
     if (map) {
       const remapped = remapB4XLog(root, map, output);
-      showRemapResults(root, remapped, `B4X++ remapped ${platform.toUpperCase()} build output`);
-    } else {
+      if (remapped && remapped.length) showRemapResults(root, remapped, `B4X++ remapped ${platform.toUpperCase()} build output`);
+      else if (exitCode !== 0 || error) showRemapResults(root, remapped, `B4X++ remapped ${platform.toUpperCase()} build output`);
+      else b4xppOutputChannel.appendLine('B4X++: build succeeded; no B4X compiler/runtime error locations to remap.');
+    } else if (exitCode !== 0 || error) {
       vscode.window.showWarningMessage('B4X++: build finished, but no .b4xpp/sourceMap.json was found for remapping.');
     }
     const seconds = ((Date.now() - started) / 1000).toFixed(2);
-    if (exitCode === 0 && !error) vscode.window.showInformationMessage(`B4X++: ${platform.toUpperCase()} build completed successfully in ${seconds}s.`);
-    else vscode.window.showErrorMessage(`B4X++: ${platform.toUpperCase()} build failed${typeof exitCode === 'number' ? ` with exit code ${exitCode}` : ''}. See the B4X++ output panel.`);
+    if (exitCode === 0 && !error) {
+      vscode.window.showInformationMessage(`B4X++: ${platform.toUpperCase()} build completed successfully in ${seconds}s.`);
+      if (context && context.isBanano && context.config && context.config.bananoRunJarAfterBuild !== false) {
+        void runBANanoJarAfterBuild(root, context, output);
+      }
+    } else vscode.window.showErrorMessage(`B4X++: ${platform.toUpperCase()} build failed${typeof exitCode === 'number' ? ` with exit code ${exitCode}` : ''}. See the B4X++ output panel.`);
   };
 
   if (buildPlan.mode === 'shell') {
@@ -4010,6 +4870,254 @@ function runNativeB4XBuildProcess(root, buildPlan, platform) {
   child.stderr.on('data', d => append(d.toString()));
   child.on('error', err => finish(null, err));
   child.on('close', code => finish(code, null));
+}
+
+
+async function runBananoJarCommand() {
+  const folder = getWorkspaceFolder();
+  if (!folder) {
+    vscode.window.showErrorMessage('B4X++: open a VS Code project folder first.');
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const config = getConfig();
+  let result = null;
+  let projectRoot = '';
+  let projectFile = '';
+  try {
+    result = transpileWorkspace(root, config);
+    if (result && result.project && isBANanoProjectResult(result)) {
+      const projectName = sanitizeProjectName(result.project.name) || sanitizeProjectName(path.basename(root)) || 'B4XPPDemo';
+      projectRoot = resolveConfiguredIdeProjectDir(root, config, result.project.projectDir, projectName, result.project.platform);
+      projectFile = path.join(projectRoot, `${projectName}.b4j`);
+    }
+  } catch {}
+  if (!projectRoot || !fs.existsSync(projectRoot)) {
+    const picked = await pickExistingNativeProject(root, 'b4j');
+    if (!picked) return;
+    projectRoot = picked.projectRoot;
+    projectFile = picked.projectFile;
+  }
+  const jarFile = findBANanoJarFile(projectFile, projectRoot, result, '');
+  if (!jarFile) {
+    vscode.window.showWarningMessage('B4X++: no generated BANano jar found. Run “B4X++: Build Current #Project + Remap Errors” first.');
+    return;
+  }
+  await runBANanoJarProcess(root, jarFile, { config, projectRoot, projectFile, result, promptServe: true });
+}
+
+function isBANanoProjectResult(result) {
+  return !!(result && result.project && /banano/i.test(String(result.project.platform || '')));
+}
+
+function isExistingB4JProjectBANano(projectFile) {
+  try {
+    if (!/\.b4j$/i.test(String(projectFile || ''))) return false;
+    const text = fs.readFileSync(projectFile, 'utf8');
+    return /(?:^|\n)\s*Library\d+\s*=\s*BANano(?:\r?\n|$)/i.test(text) || /BANano/i.test(text);
+  } catch { return false; }
+}
+
+async function runBANanoJarAfterBuild(root, context, buildOutput) {
+  const jarFile = findBANanoJarFile(context.projectFile, context.projectRoot, context.result, buildOutput);
+  if (!jarFile) {
+    vscode.window.showWarningMessage('B4X++: BANano build succeeded, but no generated jar was found under Objects. Open the B4X++ output panel for details.');
+    return;
+  }
+  await runBANanoJarProcess(root, jarFile, { ...context, promptServe: context.config && context.config.bananoPromptServeAfterRun !== false });
+}
+
+function findBANanoJarFile(projectFile, projectRoot, result, buildOutput) {
+  const candidates = [];
+  const text = String(buildOutput || '');
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/Jar file created:\s*(.+?\.jar)\s*$/i);
+    if (m) candidates.push(stripWrappingQuotes(m[1].trim()));
+  }
+  const projectName = projectFile ? path.basename(projectFile, path.extname(projectFile)) : (result && result.project && sanitizeProjectName(result.project.name));
+  if (projectRoot && projectName) candidates.push(path.join(projectRoot, 'Objects', `${projectName}.jar`));
+  if (projectRoot) {
+    try {
+      const obj = path.join(projectRoot, 'Objects');
+      for (const f of fs.readdirSync(obj)) if (/\.jar$/i.test(f)) candidates.push(path.join(obj, f));
+    } catch {}
+  }
+  const existing = uniqueStrings(candidates).filter(f => {
+    try { return f && fs.existsSync(f) && fs.statSync(f).isFile(); } catch { return false; }
+  });
+  if (!existing.length) return '';
+  existing.sort((a, b) => {
+    const an = projectName && path.basename(a, '.jar').toLowerCase() === String(projectName).toLowerCase() ? 1 : 0;
+    const bn = projectName && path.basename(b, '.jar').toLowerCase() === String(projectName).toLowerCase() ? 1 : 0;
+    if (an !== bn) return bn - an;
+    try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch { return 0; }
+  });
+  return existing[0];
+}
+
+function resolveJavaExecutable(config) {
+  const explicit = config && config.bananoJavaPath ? stripWrappingQuotes(config.bananoJavaPath) : '';
+  if (explicit) {
+    try {
+      if (fs.existsSync(explicit)) return explicit;
+      b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ BANano: configured javaPath does not exist: ${explicit}`);
+    } catch {}
+  }
+  const javaExe = process.platform === 'win32' ? 'java.exe' : 'java';
+  const home = process.env.JAVA_HOME || process.env.JDK_HOME || '';
+  const candidates = [];
+  if (home) candidates.push(path.join(home, 'bin', javaExe));
+  const b4jBuilder = resolveBuilderPathForPlatform('b4j', config || {});
+  if (b4jBuilder) {
+    const b4jDir = path.dirname(b4jBuilder);
+    candidates.push(path.join(b4jDir, 'jdk', 'bin', javaExe));
+    candidates.push(path.join(path.dirname(b4jDir), 'jdk', 'bin', javaExe));
+    candidates.push(path.join(path.dirname(b4jDir), 'java', 'bin', javaExe));
+    candidates.push(path.join(b4jDir, 'java', 'bin', javaExe));
+  }
+  if (process.platform === 'win32') {
+    candidates.push(
+      'C:\\b4j\\java\\bin\\java.exe',
+      'C:\\java\\jdk-21\\bin\\java.exe',
+      'C:\\java\\jdk-19.0.2\\bin\\java.exe',
+      'C:\\Program Files\\Java\\jdk-21\\bin\\java.exe',
+      'C:\\Program Files\\Java\\jdk-19\\bin\\java.exe',
+      'C:\\Program Files\\Java\\jdk-17\\bin\\java.exe',
+      'C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.0.0-hotspot\\bin\\java.exe'
+    );
+  }
+  for (const c of candidates) {
+    try { if (c && fs.existsSync(c)) return c; } catch {}
+  }
+  return 'java';
+}
+
+function resolveBANanoJavaFxLibPath(config, javaExe) {
+  const explicit = config && config.bananoJavaFxLibPath ? stripWrappingQuotes(config.bananoJavaFxLibPath) : '';
+  if (explicit) {
+    try {
+      if (fs.existsSync(explicit)) return explicit;
+      b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ BANano: configured javaFxLibPath does not exist: ${explicit}`);
+    } catch {}
+  }
+  const candidates = [];
+  try {
+    const javaRoot = javaExe && !/^java(?:\.exe)?$/i.test(path.basename(javaExe)) ? path.dirname(path.dirname(javaExe)) : '';
+    if (javaRoot) {
+      candidates.push(path.join(javaRoot, 'javafx', 'lib'));
+      candidates.push(path.join(path.dirname(javaRoot), 'javafx', 'lib'));
+    }
+  } catch {}
+  const b4jBuilder = resolveBuilderPathForPlatform('b4j', config || {});
+  if (b4jBuilder) {
+    const b4jDir = path.dirname(b4jBuilder);
+    candidates.push(path.join(path.dirname(b4jDir), 'java', 'javafx', 'lib'));
+    candidates.push(path.join(b4jDir, 'java', 'javafx', 'lib'));
+    candidates.push(path.join(path.dirname(b4jDir), 'jdk', 'javafx', 'lib'));
+    candidates.push(path.join(b4jDir, 'jdk', 'javafx', 'lib'));
+  }
+  if (process.platform === 'win32') {
+    candidates.push(
+      'C:\\b4j\\java\\javafx\\lib',
+      'C:\\java\\jdk-19.0.2\\javafx\\lib',
+      'C:\\java\\jdk-21\\javafx\\lib',
+      'C:\\java\\javafx-sdk-19\\lib',
+      'C:\\java\\javafx-sdk-21\\lib',
+      'C:\\Program Files\\Java\\javafx-sdk-19\\lib',
+      'C:\\Program Files\\Java\\javafx-sdk-21\\lib'
+    );
+  }
+  for (const c of uniqueStrings(candidates)) {
+    try {
+      if (c && fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+    } catch {}
+  }
+  return '';
+}
+
+function getBANanoJavaFxModules() {
+  return 'javafx.controls,javafx.fxml,javafx.web,javafx.media,javafx.swing';
+}
+
+function prepareBANanoJarRunMetadata(projectFile, projectRoot, jarFile) {
+  const objectDir = jarFile ? path.dirname(jarFile) : (projectRoot ? path.join(projectRoot, 'Objects') : '');
+  if (!projectFile || !objectDir) return [];
+  const copied = [];
+  try { fs.mkdirSync(objectDir, { recursive: true }); } catch {}
+  for (const src of [projectFile, `${projectFile}.meta`]) {
+    try {
+      if (!src || !fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
+      const dest = path.join(objectDir, path.basename(src));
+      fs.copyFileSync(src, dest);
+      copied.push(dest);
+    } catch (err) {
+      b4xppOutputChannel && b4xppOutputChannel.appendLine(`B4X++ BANano: could not copy metadata ${src}: ${err && err.message ? err.message : String(err)}`);
+    }
+  }
+  return copied;
+}
+
+function runBANanoJarProcess(root, jarFile, context = {}) {
+  return new Promise(resolve => {
+    const config = context.config || getConfig();
+    const javaExe = resolveJavaExecutable(config);
+    const javaFxLibPath = resolveBANanoJavaFxLibPath(config, javaExe);
+    const copied = prepareBANanoJarRunMetadata(context.projectFile, context.projectRoot, jarFile);
+    const args = [];
+    if (javaFxLibPath) {
+      args.push('--module-path', javaFxLibPath, `--add-modules=${getBANanoJavaFxModules()}`);
+    }
+    args.push('-jar', jarFile);
+    b4xppOutputChannel.appendLine('');
+    b4xppOutputChannel.appendLine('=== B4X++ BANano generator JAR ===');
+    if (copied.length) {
+      b4xppOutputChannel.appendLine('Copied project metadata into Objects:');
+      copied.forEach(f => b4xppOutputChannel.appendLine(`  ${f}`));
+    }
+    if (!javaFxLibPath) {
+      b4xppOutputChannel.appendLine('B4X++ BANano: JavaFX lib path was not found. If the jar fails with “JavaFX runtime components are missing”, set b4xpp.banano.javaFxLibPath.');
+    } else {
+      b4xppOutputChannel.appendLine(`JavaFX lib path: ${javaFxLibPath}`);
+    }
+    b4xppOutputChannel.appendLine([quoteShellPath(javaExe), ...args.map(a => quoteBuilderArgForDisplay(a))].join(' '));
+    b4xppOutputChannel.appendLine('');
+    b4xppOutputChannel.show(true);
+    const chunks = [];
+    const append = text => {
+      if (!text) return;
+      chunks.push(String(text));
+      b4xppOutputChannel.append(String(text));
+    };
+    const child = childProcess.spawn(javaExe, args, { cwd: path.dirname(jarFile), windowsHide: true });
+    child.stdout.on('data', d => append(d.toString()));
+    child.stderr.on('data', d => append(d.toString()));
+    child.on('error', async err => {
+      b4xppOutputChannel.appendLine(`\nBANano JAR execution failed: ${err && err.message ? err.message : String(err)}`);
+      const choice = await vscode.window.showErrorMessage('B4X++: Java could not run the BANano jar. Configure b4xpp.banano.javaPath if java is not in PATH.', 'Open Java Settings', 'Cancel');
+      if (choice === 'Open Java Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'b4xpp.banano.javaPath');
+      resolve({ ok: false, error: err, output: chunks.join('') });
+    });
+    child.on('close', async code => {
+      const combinedOutput = chunks.join('');
+      if (code === 0) {
+        b4xppOutputChannel.appendLine('\nB4X++: BANano generator JAR completed successfully.');
+        if (context.promptServe !== false) {
+          const choice = await vscode.window.showInformationMessage('B4X++: BANano generated the web output. Serve index.html with the integrated local server?', 'Serve & Open', 'Not now');
+          if (choice === 'Serve & Open') await serveBananoOutputCommand();
+        }
+        resolve({ ok: true, output: combinedOutput });
+      } else {
+        const isJavaFxMissing = /JavaFX runtime components are missing/i.test(combinedOutput);
+        if (isJavaFxMissing) {
+          const choice = await vscode.window.showErrorMessage('B4X++: JavaFX runtime is missing. Set b4xpp.banano.javaFxLibPath to your JavaFX lib folder, for example C:\\b4j\\java\\javafx\\lib.', 'Open JavaFX Settings', 'Cancel');
+          if (choice === 'Open JavaFX Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'b4xpp.banano.javaFxLibPath');
+        } else {
+          vscode.window.showErrorMessage(`B4X++: BANano generator JAR failed with exit code ${code}. See the B4X++ output panel.`);
+        }
+        resolve({ ok: false, exitCode: code, output: combinedOutput });
+      }
+    });
+  });
 }
 
 function getCustomBuildCommandForPlatform(platform, config) {
@@ -4062,6 +5170,7 @@ function normalizeProjectBuildPlatform(platform) {
   const p = String(platform || '').toLowerCase();
   if (p.startsWith('b4a')) return 'b4a';
   if (p.startsWith('b4i')) return 'b4i';
+  if (p.startsWith('banano')) return 'b4j';
   return 'b4j';
 }
 
@@ -4234,7 +5343,7 @@ async function refreshIntelliSenseCommand() {
   const interfaceCount = index.interfaces.size;
   const staticCount = index.staticCodes.size;
   vscode.window.showInformationMessage(`B4X++: IntelliSense index refreshed (${classCount} classes, ${interfaceCount} interfaces, ${staticCount} static modules).`);
-  if (editor && editor.document.languageId === 'b4xpp') validateDocument(editor.document);
+  if (editor && isB4XPPDocument(editor.document)) validateDocument(editor.document);
 }
 
 function mergeV3SemanticDiagnostics(baseDiagnosticsByUri, document, root, config) {
@@ -4270,7 +5379,7 @@ function v315DirectiveStateForDocument(document, root, config) {
   const folder = { uri: { fsPath: root } };
   let base = defaultProjectDirectiveState();
   try { base = readMainBxProjectDirectives(folder, config || getConfig()); } catch {}
-  if (document && document.languageId === 'b4xpp') {
+  if (document && isB4XPPDocument(document)) {
     const text = document.getText();
     const docState = v315ReadDirectiveStateFromText(text);
     if (v315DirectiveStateHasProjectData(docState)) {
@@ -4278,7 +5387,33 @@ function v315DirectiveStateForDocument(document, root, config) {
       return docState;
     }
   }
+  if (document && isNativeB4XProjectFile(document.uri && document.uri.fsPath)) {
+    const nativeState = v315ReadDirectiveStateFromNativeProjectText(document.getText(), document.uri.fsPath);
+    if (v315DirectiveStateHasProjectData(nativeState)) return nativeState;
+  }
   return base;
+}
+
+function v315ReadDirectiveStateFromNativeProjectText(text, filePath) {
+  const directives = defaultProjectDirectiveState();
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+  const platform = ext === '.b4a' ? 'B4A' : ext === '.b4i' ? 'B4i' : 'B4J';
+  directives.projectPlatform = platform;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    let m;
+    if ((m = line.match(/^AppType=(.+)$/i)) && platform === 'B4J') {
+      directives.projectPlatform = /^StandardJava$/i.test(m[1].trim()) ? 'B4J-NonUI' : 'B4J-UI';
+    } else if ((m = line.match(/^Build\d+=\s*[^,]+,\s*(.+)$/i))) directives.packageName = m[1].trim();
+    else if ((m = line.match(/^Library\d+=(.+)$/i))) {
+      const lib = m[1].trim();
+      if (platform === 'B4A') directives.projectB4ADependsOn.push(lib);
+      else if (platform === 'B4i') directives.projectB4iDependsOn.push(lib);
+      else directives.projectB4JDependsOn.push(lib);
+    }
+  }
+  for (const key of ['projectDependsOn','projectB4JDependsOn','projectB4ADependsOn','projectB4iDependsOn']) directives[key] = uniqueStrings(directives[key]);
+  return directives;
 }
 
 function v315ReadDirectiveStateFromText(text) {
@@ -4343,6 +5478,7 @@ function v315PlatformFromProjectDirective(value) {
   const v = String(value || '').toLowerCase();
   if (v.includes('b4a')) return 'b4a';
   if (v.includes('b4i')) return 'b4i';
+  if (v.includes('banano')) return 'b4j';
   if (v.includes('b4j')) return 'b4j';
   return '';
 }
@@ -4389,9 +5525,11 @@ function v315DependencyNamesForExternalTypes(d, platforms) {
 
 function v315LibraryDirsForPlatforms(config, platforms) {
   const dirs = [];
-  if (platforms.includes('b4j')) dirs.push(...(config.b4jInternalLibraryDirs || []), ...(config.b4jAdditionalLibraryDirs || []));
-  if (platforms.includes('b4a')) dirs.push(...(config.b4aInternalLibraryDirs || []), ...(config.b4aAdditionalLibraryDirs || []));
-  if (platforms.includes('b4i')) dirs.push(...(config.b4iInternalLibraryDirs || []), ...(config.b4iAdditionalLibraryDirs || []));
+  const folder = getWorkspaceFolder();
+  const rootPath = folder && folder.uri && folder.uri.fsPath;
+  if (platforms.includes('b4j')) dirs.push(...withAutoLibraryDirsForPlatform('b4j', [...(config.b4jInternalLibraryDirs || []), ...(config.b4jAdditionalLibraryDirs || [])], config, rootPath));
+  if (platforms.includes('b4a')) dirs.push(...withAutoLibraryDirsForPlatform('b4a', [...(config.b4aInternalLibraryDirs || []), ...(config.b4aAdditionalLibraryDirs || [])], config, rootPath));
+  if (platforms.includes('b4i')) dirs.push(...withAutoLibraryDirsForPlatform('b4i', [...(config.b4iInternalLibraryDirs || []), ...(config.b4iAdditionalLibraryDirs || [])], config, rootPath));
   dirs.push(...(config.b4xppBundledLibraryDirs || []), ...(config.b4xpplibBundledLibraryDirs || []));
   return uniqueStrings(normalizeDirectoryList(dirs));
 }
@@ -4431,6 +5569,7 @@ function v315ExternalLibraryTypesForRoot(root, config, activeDocument) {
       for (const typ of lib.types || []) v315AddExternalType(types, typ, lib, full);
     }
   }
+  if (v315ShouldUseBANanoFallbackTypes(d, deps)) v315AddBANanoFallbackTypes(types, libraries);
   const out = { types, libraries, platforms, deps, mode: v315DependencyMode(d) };
   b4xppV315ExternalTypeCacheKey = key;
   b4xppV315ExternalTypeCache = out;
@@ -4449,6 +5588,41 @@ function v315ExternalDirSignature(dirs) {
     }
   }
   return parts.sort().join('|');
+}
+
+
+function v315ShouldUseBANanoFallbackTypes(d, deps) {
+  const p = String((d && d.projectPlatform) || '').toLowerCase();
+  if (p.includes('banano')) return true;
+  return (deps || []).some(x => /^banano(?:skeleton)?$/i.test(String(x || '').trim()));
+}
+
+function v315AddBANanoFallbackTypes(types, libraries) {
+  const lib = { name: 'BANano fallback', path: 'built-in fallback', kind: 'fallback', classes: [], types: [] };
+  const add = (name, methods = [], properties = []) => {
+    if (types.has(String(name).toLowerCase())) return;
+    v315AddExternalType(types, { name, shortName: name, kind: 'Class', methods, properties }, lib, 'BANano fallback');
+  };
+  const method = (name, paramsRaw = '', returnType = '') => ({ name, paramsRaw, params: v3ParseParams(paramsRaw), returnType });
+  const prop = (name, type = 'Object') => ({ name, type });
+  add('BANano', [
+    method('Initialize', 'CompilerName As String, AppName As String, Version As Int'),
+    method('Build', 'Dir As String'),
+    method('Await', 'Promise As BANanoPromise', 'Object'),
+    method('Alert', 'Message As String'),
+    method('GetFileAsText', 'FileURL As String, Options As BANanoFetchOptions, Encoding As String', 'BANanoPromise'),
+    method('GetFileAsDataURL', 'FileURL As String, Options As BANanoFetchOptions', 'BANanoPromise')
+  ], [prop('Header', 'BANanoHeader'), prop('TranspilerOptions', 'BANanoTranspilerOptions'), prop('JAVASCRIPT_NAME', 'String')]);
+  add('BANanoElement', [method('Initialize', 'Selector As String'), method('Append', 'Html As String'), method('SetHTML', 'Html As String'), method('GetHTML', '', 'String')]);
+  add('BANanoEvent');
+  add('BANanoPromise', [method('Then', 'Result As Object'), method('Else', 'Error As Object'), method('Finally'), method('End')]);
+  add('BANanoFetchOptions');
+  add('BANanoObject');
+  add('BANanoHeader', [], [prop('Title', 'String')]);
+  add('BANanoTranspilerOptions', [], [prop('MergeAllCSSFiles', 'Boolean'), prop('MergeAllJavascriptFiles', 'Boolean'), prop('RemoveDeadCode', 'Boolean'), prop('ShowWarningDeadCode', 'Boolean')]);
+  add('SKButton', [method('Initialize', 'Callback As Object, EventName As String, ID As String'), method('AddToParent', 'ParentID As String')], [prop('Text', 'String'), prop('Flavor', 'String')]);
+  add('SKTools', [method('WriteTheme')]);
+  libraries.set('banano fallback', lib);
 }
 
 function v315AddExternalType(types, rawType, lib, libraryPath) {
@@ -4633,9 +5807,11 @@ function v315DependencyDirectiveTokenAt(document, position) {
 
 function v315AllLibraryDirsForDependencyHover(config) {
   const dirs = [];
-  dirs.push(...(config.b4jInternalLibraryDirs || []), ...(config.b4jAdditionalLibraryDirs || []));
-  dirs.push(...(config.b4aInternalLibraryDirs || []), ...(config.b4aAdditionalLibraryDirs || []));
-  dirs.push(...(config.b4iInternalLibraryDirs || []), ...(config.b4iAdditionalLibraryDirs || []));
+  const folder = getWorkspaceFolder();
+  const rootPath = folder && folder.uri && folder.uri.fsPath;
+  dirs.push(...withAutoLibraryDirsForPlatform('b4j', [...(config.b4jInternalLibraryDirs || []), ...(config.b4jAdditionalLibraryDirs || [])], config, rootPath));
+  dirs.push(...withAutoLibraryDirsForPlatform('b4a', [...(config.b4aInternalLibraryDirs || []), ...(config.b4aAdditionalLibraryDirs || [])], config, rootPath));
+  dirs.push(...withAutoLibraryDirsForPlatform('b4i', [...(config.b4iInternalLibraryDirs || []), ...(config.b4iAdditionalLibraryDirs || [])], config, rootPath));
   dirs.push(...(config.b4xppBundledLibraryDirs || []), ...(config.b4xpplibBundledLibraryDirs || []));
   return uniqueStrings(normalizeDirectoryList(dirs));
 }
@@ -4767,14 +5943,265 @@ function v315DependencyDirectiveHover(document, position) {
   return new vscode.Hover(v315DependencyLibraryHoverMarkdown(lib, token.name), token.range);
 }
 
+
+//────────────────────────────────────────────────────────────
+// BANano embedded Web IntelliSense helpers
+//────────────────────────────────────────────────────────────
+function b4xppEmbeddedWebContext(document, position) {
+  if (!isB4XLikeDocument(document) || !position) return null;
+  // Inside ${...}, BANano is asking for normal B4X symbol resolution,
+  // even if the interpolation is embedded in HTML/CSS/JS. Keep Go to Definition,
+  // hover and normal scope completions alive only for that small island.
+  if (b4xppIsInsideBananoB4XInterpolation(document, position)) return null;
+  const block = b4xppEmbeddedDirectiveBlockContext(document, position);
+  if (block) return block;
+  return b4xppEmbeddedSmartStringContext(document, position);
+}
+
+function b4xppIsInsideBananoB4XInterpolation(document, position) {
+  return b4xppIsInsideSmartStringInterpolation(document, position) || b4xppIsInsideSmartJavaScriptDirectiveInterpolation(document, position);
+}
+
+function b4xppIsInsideSmartStringInterpolation(document, position) {
+  const info = b4xppSmartStringStateAt(document, position);
+  if (!info || !info.inSmart) return false;
+  const prefix = String(info.contentPrefix || '');
+  const lastOpen = prefix.lastIndexOf('${');
+  const lastClose = prefix.lastIndexOf('}');
+  return lastOpen >= 0 && lastOpen > lastClose;
+}
+
+function b4xppIsInsideSmartJavaScriptDirectiveInterpolation(document, position) {
+  const block = b4xppEmbeddedDirectiveBlockContext(document, position);
+  if (!block || !block.smart) return false;
+  const prefix = b4xppLinePrefix(document, position);
+  const lastOpen = prefix.lastIndexOf('${');
+  const lastClose = prefix.lastIndexOf('}');
+  return lastOpen >= 0 && lastOpen > lastClose;
+}
+
+function b4xppEmbeddedDirectiveBlockContext(document, position) {
+  const currentLine = Math.max(0, position.line || 0);
+  for (let i = currentLine; i >= 0; i--) {
+    const text = document.lineAt(i).text || '';
+    const trimmed = text.trim();
+    // If the nearest directive above the cursor is #End If then the cursor is
+    // no longer inside the embedded web block.
+    if (/^#End\s+If\b/i.test(trimmed)) return null;
+    const m = trimmed.match(/^#If\s+(CSS|JAVASCRIPT|JS|SMARTJAVASCRIPT|JAVASCRIPTSMART|HTML)\b/i);
+    if (m) {
+      const token = m[1].toLowerCase();
+      const kind = token === 'css' ? 'css' : (token === 'html' ? 'html' : 'javascript');
+      const smart = token === 'smartjavascript' || token === 'javascriptsmart';
+      return { kind, source: 'directive', smart, startLine: i, endLine: currentLine };
+    }
+  }
+  return null;
+}
+
+function b4xppEmbeddedSmartStringContext(document, position) {
+  const info = b4xppSmartStringStateAt(document, position);
+  if (!info || !info.inSmart) return null;
+  const prefix = String(info.contentPrefix || '').slice(-1200);
+  if (b4xppLooksLikeEmbeddedHtml(prefix)) return { kind: 'html', source: 'smartstring', contentPrefix: prefix };
+  if (b4xppLooksLikeEmbeddedJavaScriptSmartString(prefix)) return { kind: 'javascript', source: 'smartstring', contentPrefix: prefix };
+  return { kind: 'string', source: 'smartstring', contentPrefix: prefix };
+}
+
+function b4xppSmartStringStateAt(document, position) {
+  const upto = b4xppDocumentTextUntil(document, position);
+  let inSmart = false;
+  let smartStart = -1;
+  for (let i = 0; i < upto.length; i++) {
+    const ch = upto[i];
+    const next = upto[i + 1];
+    if (!inSmart && ch === '$' && next === '"') {
+      inSmart = true;
+      smartStart = i + 2;
+      i++;
+      continue;
+    }
+    if (inSmart && ch === '"' && next === '$') {
+      inSmart = false;
+      smartStart = -1;
+      i++;
+      continue;
+    }
+  }
+  return { inSmart, smartStart, contentPrefix: inSmart && smartStart >= 0 ? upto.slice(smartStart) : '' };
+}
+
+function b4xppIsInsideSmartString(document, position) {
+  const info = b4xppSmartStringStateAt(document, position);
+  return !!(info && info.inSmart);
+}
+
+function b4xppDocumentTextUntil(document, position) {
+  const parts = [];
+  for (let i = 0; i < position.line; i++) parts.push(document.lineAt(i).text || '');
+  parts.push((document.lineAt(position.line).text || '').slice(0, position.character));
+  return parts.join('\n');
+}
+
+function b4xppLooksLikeEmbeddedHtml(text) {
+  const s = String(text || '');
+  return /<\/?[a-zA-Z][\w:-]*(?:\s|>|\/)/.test(s) || /<!DOCTYPE\s+html/i.test(s);
+}
+
+function b4xppLooksLikeEmbeddedJavaScriptSmartString(text) {
+  const s = String(text || '').trimStart();
+  return /^\[BAN(?:RAW|CLEAN)\]\s*[\{\[]/i.test(s);
+}
+
+function b4xppLinePrefix(document, position) {
+  try { return (document.lineAt(position.line).text || '').slice(0, position.character); } catch { return ''; }
+}
+
+class B4XPPEmbeddedWebCompletionProvider {
+  provideCompletionItems(document, position) {
+    const ctx = b4xppEmbeddedWebContext(document, position);
+    if (!ctx) return [];
+    const prefix = b4xppLinePrefix(document, position);
+    if (ctx.kind === 'html') return b4xppHtmlCompletions(prefix, document, position, ctx);
+    if (ctx.kind === 'css') return b4xppCssCompletions(prefix, document, position, ctx);
+    if (ctx.kind === 'javascript') return b4xppJsCompletions(prefix, document, position, ctx);
+    return [];
+  }
+}
+
+function b4xppCompletion(label, kind, detail, insertText) {
+  const item = new vscode.CompletionItem(label, kind);
+  if (detail) item.detail = detail;
+  if (insertText instanceof vscode.SnippetString) item.insertText = insertText;
+  else if (typeof insertText === 'string') item.insertText = insertText;
+  return item;
+}
+
+function b4xppHtmlCompletions(prefix, document, position, ctx) {
+  const p = String(prefix || '');
+  const items = [];
+  const inClosingTag = /<\/([A-Za-z0-9:-]*)$/i.test(p);
+  const inTagName = /<([A-Za-z0-9:-]*)$/i.test(p);
+  const inClassValue = /\bclass\s*=\s*"[^"]*$/i.test(p) || /\bclass\s*=\s*'[^']*$/i.test(p);
+  const inStyleValue = /\bstyle\s*=\s*"[^"]*$/i.test(p) || /\bstyle\s*=\s*'[^']*$/i.test(p);
+  const inAttribute = /<\/?[A-Za-z][\w:-]*(?:\s+[^<>]*)?\s+[A-Za-z0-9:-]*$/i.test(p) && !/[=<>]$/.test(p.trim());
+  const afterEquals = /=\s*$/i.test(p);
+
+  if (inClosingTag) {
+    for (const tag of b4xppHtmlLikelyOpenTags(document, position, ctx)) items.push(b4xppCompletion(tag, vscode.CompletionItemKind.Property, 'HTML closing tag'));
+    return items;
+  }
+  if (inClassValue) return b4xppHtmlClassCompletions();
+  if (inStyleValue) return b4xppCssPropertyCompletions(true);
+  if (afterEquals) {
+    for (const v of ['"$1"', '"container"', '"button-primary"', '"margin-top: 32px;"', '"#"']) {
+      items.push(b4xppCompletion(v.replace(/\$1/g, '…'), vscode.CompletionItemKind.Value, 'HTML attribute value', new vscode.SnippetString(v)));
+    }
+    return items;
+  }
+  if (inTagName) return b4xppHtmlTagCompletions();
+  if (inAttribute || /<[^>]*\s$/i.test(p)) return b4xppHtmlAttributeCompletions();
+
+  // In embedded HTML blocks, still make the main HTML tags easy to discover.
+  return b4xppHtmlTagCompletions().slice(0, 24);
+}
+
+function b4xppHtmlTagCompletions() {
+  const tags = ['div','span','p','h1','h2','h3','h4','h5','h6','button','input','label','textarea','select','option','form','a','img','ul','ol','li','table','thead','tbody','tr','th','td','section','article','header','footer','main','nav','br','hr','canvas','script','style'];
+  return tags.map(tag => {
+    const item = b4xppCompletion(tag, vscode.CompletionItemKind.Class, 'HTML tag');
+    if (!['br','hr','img','input'].includes(tag)) item.insertText = new vscode.SnippetString(`${tag}>$0</${tag}>`);
+    return item;
+  });
+}
+
+function b4xppHtmlAttributeCompletions() {
+  const attrs = [
+    ['class', 'CSS class', 'class="$1"'], ['id', 'Element id', 'id="$1"'], ['style', 'Inline CSS', 'style="$1"'],
+    ['href', 'Link target', 'href="$1"'], ['src', 'Source URL', 'src="$1"'], ['alt', 'Alternative text', 'alt="$1"'],
+    ['type', 'Input / button type', 'type="$1"'], ['name', 'Field name', 'name="$1"'], ['value', 'Initial value', 'value="$1"'],
+    ['placeholder', 'Input placeholder', 'placeholder="$1"'], ['title', 'Tooltip title', 'title="$1"'], ['role', 'ARIA role', 'role="$1"'],
+    ['aria-label', 'Accessibility label', 'aria-label="$1"'], ['data-', 'Custom data attribute', 'data-${1:name}="$2"'],
+    ['onclick', 'Inline click handler', 'onclick="$1"']
+  ];
+  return attrs.map(([label, detail, snippet]) => b4xppCompletion(label, vscode.CompletionItemKind.Property, detail, new vscode.SnippetString(snippet)));
+}
+
+function b4xppHtmlClassCompletions() {
+  const classes = [
+    'container','row','column','columns','button','button-primary','u-full-width','u-max-full-width','u-pull-right','u-pull-left',
+    'navbar','card','panel','hidden','visible','text-center','text-left','text-right','mt-1','mt-2','mt-3','mb-1','mb-2','mb-3'
+  ];
+  return classes.map(c => b4xppCompletion(c, vscode.CompletionItemKind.Value, 'HTML / BANanoSkeleton CSS class'));
+}
+
+function b4xppHtmlLikelyOpenTags(document, position, ctx) {
+  const text = b4xppDocumentTextUntil(document, position);
+  const tags = [];
+  const re = /<\/?([a-zA-Z][\w:-]*)\b[^>]*>/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const raw = m[0];
+    const tag = m[1].toLowerCase();
+    if (/^<\//.test(raw)) {
+      const idx = tags.lastIndexOf(tag);
+      if (idx >= 0) tags.splice(idx, 1);
+    } else if (!/\/>$/.test(raw) && !['br','hr','img','input','meta','link'].includes(tag)) {
+      tags.push(tag);
+    }
+  }
+  return Array.from(new Set(tags.reverse())).slice(0, 8).concat(['div','span','p']).filter((v, i, a) => a.indexOf(v) === i);
+}
+
+function b4xppCssCompletions(prefix, document, position, ctx) {
+  const p = String(prefix || '');
+  if (/:\s*[-\w#.%()]*$/i.test(p)) return b4xppCssValueCompletions();
+  if (/[{;]\s*[-\w]*$/i.test(p) || /^\s*[-\w]*$/i.test(p)) return b4xppCssPropertyCompletions(false);
+  return b4xppCssSelectorCompletions().concat(b4xppCssPropertyCompletions(false).slice(0, 20));
+}
+
+function b4xppCssPropertyCompletions(inline) {
+  const props = ['background','background-color','color','display','position','top','right','bottom','left','width','height','min-width','max-width','min-height','max-height','margin','margin-top','margin-right','margin-bottom','margin-left','padding','padding-top','padding-right','padding-bottom','padding-left','border','border-radius','box-shadow','font-size','font-weight','font-family','line-height','text-align','text-decoration','opacity','overflow','z-index','cursor','gap','grid-template-columns','align-items','justify-content','flex-direction'];
+  return props.map(prop => b4xppCompletion(prop, vscode.CompletionItemKind.Property, inline ? 'CSS property for style="..."' : 'CSS property', new vscode.SnippetString(`${prop}: $1;`)));
+}
+
+function b4xppCssValueCompletions() {
+  const vals = ['block','inline-block','flex','grid','none','relative','absolute','fixed','center','left','right','bold','normal','pointer','auto','hidden','visible','100%','1rem','8px','16px','32px','#ffffff','#000000','#297eff','transparent'];
+  return vals.map(v => b4xppCompletion(v, vscode.CompletionItemKind.Value, 'CSS value'));
+}
+
+function b4xppCssSelectorCompletions() {
+  const sels = ['body','html','.container','.button-primary','.button','input','button','h1','p','#body'];
+  return sels.map(s => b4xppCompletion(s, vscode.CompletionItemKind.Class, 'CSS selector'));
+}
+
+function b4xppJsCompletions(prefix, document, position, ctx) {
+  const rows = [
+    ['console.log', 'Log to browser console', 'console.log($1)'], ['document.querySelector', 'Find first DOM element', 'document.querySelector("$1")'],
+    ['document.querySelectorAll', 'Find DOM elements', 'document.querySelectorAll("$1")'], ['addEventListener', 'Register event listener', 'addEventListener("${1:click}", function(e) {\n\t$0\n})'],
+    ['window', 'Browser window object', 'window'], ['document', 'Browser document object', 'document'], ['fetch', 'Fetch API', 'fetch("$1")'],
+    ['JSON.parse', 'Parse JSON', 'JSON.parse($1)'], ['JSON.stringify', 'Stringify JSON', 'JSON.stringify($1)'],
+    ['const', 'JavaScript constant', 'const ${1:name} = $2'], ['let', 'JavaScript variable', 'let ${1:name} = $2'],
+    ['function', 'JavaScript function', 'function ${1:name}($2) {\n\t$0\n}'], ['async function', 'Async JavaScript function', 'async function ${1:name}($2) {\n\t$0\n}'],
+    ['await', 'Await a Promise', 'await $1'], ['return', 'Return value', 'return $1']
+  ];
+  const items = rows.map(([label, detail, snippet]) => b4xppCompletion(label, vscode.CompletionItemKind.Function, detail, new vscode.SnippetString(snippet)));
+  if (ctx && (ctx.source === 'directive' || ctx.source === 'smartstring')) {
+    items.push(b4xppCompletion('${var}', vscode.CompletionItemKind.Variable, 'BANano SmartString variable injection', new vscode.SnippetString('${${1:var}}')));
+  }
+  return items;
+}
+
 class B4XPPV3IntelliSenseProvider {
   provideCompletionItems(document, position) {
+    if (b4xppEmbeddedWebContext(document, position)) return [];
     const index = buildV3Index(document);
     const fileInfo = v3GetFileInfo(index, document.uri.fsPath);
     const line = document.lineAt(position.line).text;
     const rawPrefix = line.slice(0, position.character);
     const prefix = v33CodePrefix(rawPrefix);
-    const currentClass = v3FindClassAt(index, fileInfo, position.line);
+    const currentOwner = v3FindOwnerAt(index, fileInfo, position.line);
+    const currentClass = currentOwner && currentOwner.kind === 'class' ? currentOwner : null;
 
     if (v33IsInsideString(rawPrefix)) return [];
 
@@ -4792,13 +6219,16 @@ class B4XPPV3IntelliSenseProvider {
       return v3MemberCompletions(index, currentClass.name, { currentClass: currentClass.name, includeProtected: true, includePrivate: true, receiver: 'This' });
     }
 
-    const receiverMatch = prefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$/);
-    if (receiverMatch) {
-      const receiver = receiverMatch[1];
-      const resolved = v3ResolveReceiverType(index, fileInfo, position.line, receiver);
+    const receiverExpr = v317CompletionReceiverExpression(prefix);
+    if (receiverExpr) {
+      const resolved = v317ResolveExpressionType(index, fileInfo, position.line, receiverExpr);
       if (resolved) return v3MemberCompletions(index, resolved.type, { currentClass: currentClass && currentClass.name, includeProtected: false, includePrivate: false, staticOnly: resolved.staticOnly, externalTypes: index.externalTypes });
-      const builtIn = v3BuiltinMembers(receiver, null);
-      if (builtIn.length) return builtIn;
+      // Keep the small built-in fallback for single identifiers only. Chained
+      // expressions must be resolved through their declared / inferred types.
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/i.test(receiverExpr)) {
+        const builtIn = v3BuiltinMembers(receiverExpr, null);
+        if (builtIn.length) return builtIn;
+      }
       return [];
     }
 
@@ -4809,16 +6239,17 @@ class B4XPPV3IntelliSenseProvider {
     if (ctx === 'member-keyword') return v33MemberDeclarationCompletions();
 
     if (ctx === 'expression') {
-      return v33ScopeCompletions(index, fileInfo, position.line, currentClass, { includeStatementKeywords: false });
+      return v33ScopeCompletions(index, fileInfo, position.line, currentOwner, { includeStatementKeywords: false });
     }
 
     // Statement / normal code completion: prefer what is actually visible here.
     // Do not return #Class / Property / top-level types in expression-like contexts,
     // otherwise VS Code proposes them in places such as `If x = ...`.
-    return v33ScopeCompletions(index, fileInfo, position.line, currentClass, { includeStatementKeywords: true });
+    return v33ScopeCompletions(index, fileInfo, position.line, currentOwner, { includeStatementKeywords: true });
   }
 
   provideHover(document, position) {
+    if (b4xppEmbeddedWebContext(document, position)) return null;
     const dependencyHover = v315DependencyDirectiveHover(document, position);
     if (dependencyHover) return dependencyHover;
     const index = buildV3Index(document);
@@ -4843,11 +6274,13 @@ class B4XPPV3IntelliSenseProvider {
   }
 
   provideSignatureHelp(document, position) {
+    if (b4xppEmbeddedWebContext(document, position)) return null;
     const index = buildV3Index(document);
     const fileInfo = v3GetFileInfo(index, document.uri.fsPath);
     const parsed = v3ParseCallAt(document, position);
     if (!parsed) return null;
-    const currentClass = v3FindClassAt(index, fileInfo, position.line);
+    const currentOwner = v3FindOwnerAt(index, fileInfo, position.line);
+    const currentClass = currentOwner && currentOwner.kind === 'class' ? currentOwner : null;
     let methods = [];
     if (parsed.receiver) {
       if (/^Super$/i.test(parsed.receiver) && currentClass && currentClass.extendsName) {
@@ -4855,13 +6288,14 @@ class B4XPPV3IntelliSenseProvider {
       } else if (/^(This|Me)$/i.test(parsed.receiver) && currentClass) {
         methods.push(...v3FindMethodsInClass(index, currentClass.name, parsed.name, { includeAncestors: true }));
       } else {
-        const resolved = v3ResolveReceiverType(index, fileInfo, position.line, parsed.receiver);
+        const resolved = v317ResolveExpressionType(index, fileInfo, position.line, parsed.receiver);
         if (resolved) {
           methods.push(...v3FindMethodsInType(index, resolved.type, parsed.name));
         }
       }
-    } else if (currentClass) {
-      methods.push(...v3FindMethodsInClass(index, currentClass.name, parsed.name, { includeAncestors: true }));
+    } else if (currentOwner) {
+      if (currentOwner.kind === 'class') methods.push(...v3FindMethodsInClass(index, currentOwner.name, parsed.name, { includeAncestors: true }));
+      else methods.push(...v3FindMethodsInType(index, currentOwner.name, parsed.name));
     }
     const builtin = v3BuiltinMethodSignature(parsed.receiver, parsed.name);
     if (builtin) methods.push(builtin);
@@ -4918,9 +6352,9 @@ class B4XPPV3WorkspaceSymbolProvider {
       if (q && !symbol.name.toLowerCase().includes(q)) return;
       symbols.push(new vscode.SymbolInformation(symbol.name, kind, container || '', toLocation(symbol)));
     };
-    for (const cls of index.classes.values()) add(cls, vscode.SymbolKind.Class, 'B4X++');
+    for (const cls of index.classes.values()) add(cls, vscode.SymbolKind.Class, cls.nativeB4X ? 'B4X native' : 'B4X++');
     for (const intf of index.interfaces.values()) add(intf, vscode.SymbolKind.Interface, 'B4X++');
-    for (const mod of index.staticCodes.values()) add(mod, vscode.SymbolKind.Module, 'B4X++');
+    for (const mod of index.staticCodes.values()) add(mod, vscode.SymbolKind.Module, mod.nativeB4X ? 'B4X native' : 'B4X++');
     for (const owner of [...index.classes.values(), ...index.interfaces.values(), ...index.staticCodes.values()]) {
       for (const prop of owner.properties.values()) add(prop, vscode.SymbolKind.Property, owner.name);
       for (const method of owner.methods.values()) add(method, vscode.SymbolKind.Method, owner.name);
@@ -4937,16 +6371,20 @@ function buildV3Index(document) {
 
 function buildV3IndexForRoot(root, config, activeDocument) {
   const sourceRoot = path.join(root, (config && config.sourceDir) || 'src-b4xpp');
-  const files = fs.existsSync(sourceRoot) ? collectBxFiles(sourceRoot) : [];
-  if (activeDocument && activeDocument.languageId === 'b4xpp' && !files.some(f => samePath(f, activeDocument.uri.fsPath))) files.push(activeDocument.uri.fsPath);
+  const files = [];
+  if (fs.existsSync(sourceRoot)) files.push(...collectBxFiles(sourceRoot));
+  files.push(...collectNativeB4XCodeFiles(root, config || {}));
+  const activePath = activeDocument && activeDocument.uri && activeDocument.uri.fsPath;
+  if (activeDocument && isB4XLikeDocument(activeDocument) && activePath && !files.some(f => samePath(f, activePath)) && !isNativeB4XProjectFile(activePath)) files.push(activePath);
+  const uniqueFiles = uniqueFilePaths(files).sort((a, b) => a.localeCompare(b));
   const v315ConfigSig = [config && config.platform, ...(config && config.b4jInternalLibraryDirs || []), ...(config && config.b4jAdditionalLibraryDirs || []), ...(config && config.b4aInternalLibraryDirs || []), ...(config && config.b4aAdditionalLibraryDirs || []), ...(config && config.b4iInternalLibraryDirs || []), ...(config && config.b4iAdditionalLibraryDirs || []), ...(config && config.b4xppBundledLibraryDirs || [])].join('|');
-  const key = [root, v315ConfigSig, files.map(f => `${f}:${safeMTime(f)}`).join('|'), activeDocument ? activeDocument.uri.fsPath + ':' + activeDocument.version : ''].join('::');
+  const key = [root, v315ConfigSig, uniqueFiles.map(f => `${f}:${safeMTime(f)}`).join('|'), activeDocument ? activeDocument.uri.fsPath + ':' + activeDocument.version : ''].join('::');
   if (b4xppV3IndexCache && b4xppV3IndexCacheKey === key) return b4xppV3IndexCache;
 
   const index = {
     root,
     sourceRoot,
-    files,
+    files: uniqueFiles,
     classes: new Map(),
     interfaces: new Map(),
     staticCodes: new Map(),
@@ -4955,7 +6393,7 @@ function buildV3IndexForRoot(root, config, activeDocument) {
     externalTypes: new Map(),
     externalLibraries: new Map()
   };
-  for (const file of files) {
+  for (const file of uniqueFiles) {
     try {
       const text = activeDocument && samePath(activeDocument.uri.fsPath, file) ? activeDocument.getText() : getWorkspaceText(file);
       const info = v3ParseFile(file, text);
@@ -4987,11 +6425,20 @@ function safeMTime(file) {
 
 function v3ParseFile(file, text) {
   const lines = normalizeNewlines(text).split('\n');
-  const info = { file, lines, includes: [], classes: [], interfaces: [], staticCodes: [], methods: [], closures: [] };
+  const info = { file, lines, includes: [], classes: [], interfaces: [], staticCodes: [], methods: [], closures: [], moduleFields: new Map(), nativeB4X: isNativeB4XCodeFile(file), nativeProject: isNativeB4XProjectFile(file) };
   let owner = null;
   let method = null;
   let inGlobals = false;
   const closureStack = [];
+
+  if (info.nativeB4X) {
+    const nativeKind = v3InferNativeB4XModuleKind(text);
+    const moduleName = sanitizeNativeB4XModuleName(path.basename(file, path.extname(file)));
+    owner = v3MakeOwner(nativeKind, moduleName, lines[0] || moduleName, 0, file);
+    owner.nativeB4X = true;
+    owner.fullRange = new vscode.Range(0, 0, Math.max(0, lines.length - 1), (lines[lines.length - 1] || '').length);
+    if (nativeKind === 'class') info.classes.push(owner); else info.staticCodes.push(owner);
+  }
 
   const closeMethod = (endLine) => {
     if (method) {
@@ -5085,14 +6532,26 @@ function v3ParseFile(file, text) {
       continue;
     }
 
-    if (owner && (method == null || inGlobals)) {
+    if (method == null || inGlobals) {
       const field = v3ParseFieldLine(raw, i, file, owner);
-      if (field) owner.fields.set(field.name.toLowerCase(), field);
+      if (field) {
+        if (owner) owner.fields.set(field.name.toLowerCase(), field);
+        else if (inGlobals || method == null) info.moduleFields.set(field.name.toLowerCase(), field);
+      }
     }
   }
   closeMethod(lines.length - 1);
   closeOwner(lines.length - 1);
   return info;
+}
+
+function v3InferNativeB4XModuleKind(text) {
+  return /(?:^|\n)\s*Sub\s+Class_Globals\b/i.test(String(text || '')) ? 'class' : 'staticCode';
+}
+
+function sanitizeNativeB4XModuleName(name) {
+  const clean = String(name || 'Module').replace(/[^A-Za-z0-9_]/g, '_');
+  return /^[A-Za-z_]/.test(clean) ? clean : 'Module_' + clean;
 }
 
 function v3MakeOwner(kind, name, raw, line, file) {
@@ -5195,6 +6654,7 @@ function collectV3SemanticDiagnostics(index) {
   };
   for (const dup of index.duplicates) add(dup.second.file, dup.second.line, 'error', `Duplicate B4X++ symbol '${dup.second.name}'. First declaration is in ${path.basename(dup.first.file)}.`);
   for (const info of index.fileInfos.values()) {
+    if (info.nativeB4X) continue;
     for (const inc of info.includes) {
       const resolved = resolveIncludeTargetForDocument({ uri: vscode.Uri.file(info.file) }, inc.value);
       if (!resolved || !fs.existsSync(resolved)) add(info.file, inc.line, 'error', `#Include file not found: ${inc.value}`);
@@ -5297,27 +6757,170 @@ function v3IsDescendantOf(index, child, parent) {
 }
 
 function v3GetFileInfo(index, file) { return index.fileInfos.get(normalizePathKey(file)); }
-function v3FindClassAt(index, info, line) { return info ? info.classes.find(c => line >= c.startLine && line <= c.endLine) || null : null; }
+function v3FindOwnerAt(index, info, line) {
+  if (!info) return null;
+  return [...(info.classes || []), ...(info.staticCodes || []), ...(info.interfaces || [])].find(o => line >= o.startLine && line <= o.endLine) || null;
+}
+function v3FindClassAt(index, info, line) {
+  const owner = v3FindOwnerAt(index, info, line);
+  return owner && owner.kind === 'class' ? owner : null;
+}
 function v3FindMethodAt(info, line) { return info ? info.methods.find(m => line >= m.startLine && line <= m.endLine) || null : null; }
 
 function v3ResolveReceiverType(index, info, line, receiver) {
   if (!receiver) return null;
   const lname = receiver.toLowerCase();
-  if (index.staticCodes.has(lname)) return { type: receiver, staticOnly: true };
-  if (index.classes.has(lname)) return { type: receiver, staticOnly: true };
+  if (index.staticCodes && index.staticCodes.has(lname)) return { type: receiver, staticOnly: true };
+  if (index.classes && index.classes.has(lname)) return { type: receiver, staticOnly: true };
   const vars = v3CollectVariables(index, info, line);
   const variable = vars.get(lname);
   if (variable) return { type: variable.assignedType || variable.polyType || variable.type, staticOnly: false };
   return null;
 }
 
+function v317CompletionReceiverExpression(prefix) {
+  const p = String(prefix || '');
+  const dot = v317LastTopLevelDot(p);
+  if (dot < 0) return null;
+  const suffix = p.slice(dot + 1);
+  // Member completion only makes sense when the cursor is after a dot and the
+  // right side is still a member prefix, e.g. Layout.LastRow.Col|.
+  if (!/^\s*[A-Za-z_][A-Za-z0-9_]*\s*$/i.test(suffix) && suffix.trim() !== '') return null;
+  const rawExpr = p.slice(0, dot).trim();
+  const expr = v318ExpressionTail(rawExpr);
+  return expr ? expr : null;
+}
+
+function v318ExpressionTail(text) {
+  const s = String(text || '').trimEnd();
+  if (!s) return '';
+  let depth = 0;
+  let inString = false;
+  for (let i = s.length - 1; i >= 0; i--) {
+    const ch = s[i];
+    const prev = s[i - 1];
+    if (ch === '"') {
+      // B4X escaped quote in normal strings: "".  When scanning backward,
+      // skip the pair as one string character.
+      if (inString && prev === '"') { i--; continue; }
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === ')' || ch === ']' || ch === '}') { depth++; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      if (depth > 0) { depth--; continue; }
+      return s.slice(i + 1).trim();
+    }
+    if (depth === 0 && /[=,:;&+\-*\/<>]/.test(ch)) {
+      return s.slice(i + 1).trim();
+    }
+  }
+  const cleaned = s.replace(/^\s*(?:Return|Then|Else\s+If|If|Do\s+While|Do\s+Until|While|Until)\s+/i, '');
+  return cleaned.trim();
+}
+
+function v317LastTopLevelDot(text) {
+  const s = String(text || '');
+  let depth = 0;
+  let inString = false;
+  let last = -1;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const next = s[i + 1];
+    if (ch === '"') {
+      if (inString && next === '"') { i++; continue; }
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth--;
+    else if (ch === '.' && depth === 0) last = i;
+  }
+  return last;
+}
+
+function v317SplitDottedExpression(expr) {
+  const s = String(expr || '').trim();
+  const parts = [];
+  let start = 0;
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const next = s[i + 1];
+    if (ch === '"') {
+      if (inString && next === '"') { i++; continue; }
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth--;
+    else if (ch === '.' && depth === 0) {
+      const part = s.slice(start, i).trim();
+      if (part) parts.push(part);
+      start = i + 1;
+    }
+  }
+  const tail = s.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function v317ParseMemberSegment(segment) {
+  const s = String(segment || '').trim();
+  const m = s.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\s*\((.*)\)\s*)?$/);
+  return m ? { name: m[1], hasCall: /\)\s*$/.test(s), args: m[2] || '' } : null;
+}
+
+function v317ResolveExpressionType(index, info, line, expr) {
+  const parts = v317SplitDottedExpression(expr);
+  if (!parts.length) return null;
+  const first = v317ParseMemberSegment(parts[0]);
+  if (!first || first.hasCall) return null;
+  let resolved = v3ResolveReceiverType(index, info, line, first.name);
+  if (!resolved) return null;
+  for (let i = 1; i < parts.length; i++) {
+    const seg = v317ParseMemberSegment(parts[i]);
+    if (!seg) return null;
+    const found = v3FindMemberInType(index, resolved.type, seg.name) || v3FindMethodInType(index, resolved.type, seg.name);
+    const nextType = v317TypeFromResolvedMember(found);
+    if (!nextType) return null;
+    resolved = { type: nextType, staticOnly: false };
+  }
+  return resolved;
+}
+
+function v317TypeFromResolvedMember(found) {
+  if (!found) return '';
+  const symbol = found.symbol || found.method || found;
+  if (!symbol) return '';
+  return String(symbol.returnType || symbol.type || symbol.assignedType || symbol.polyType || '').trim();
+}
+
+function v317DottedMemberExpressionAt(document, position, range) {
+  if (!document || !range) return null;
+  const line = document.lineAt(position.line).text || '';
+  const before = line.slice(0, range.start.character).replace(/\s+$/g, '');
+  if (!before.endsWith('.')) return null;
+  const expr = v318ExpressionTail(before.slice(0, -1).trim());
+  if (!expr) return null;
+  return { receiverExpr: expr, member: document.getText(range) };
+}
+
 function v3CollectVariables(index, info, line) {
   const vars = new Map();
   if (!info) return vars;
-  const cls = v3FindClassAt(index, info, line);
-  if (cls) {
-    for (const field of cls.fields.values()) vars.set(field.name.toLowerCase(), { ...field, assignedType: null });
-    for (const prop of cls.properties.values()) vars.set(prop.name.toLowerCase(), { ...prop, assignedType: null });
+  const owner = v3FindOwnerAt(index, info, line);
+  // Top-level B4X/B4X++ Process_Globals are visible from every Sub in the module.
+  // This is especially important for BANano projects, where the conventional
+  // declaration is `Private BANano As BANano 'ignore` inside Process_Globals.
+  if (info.moduleFields) for (const field of info.moduleFields.values()) vars.set(field.name.toLowerCase(), { ...field, assignedType: null });
+  if (owner) {
+    for (const field of owner.fields.values()) vars.set(field.name.toLowerCase(), { ...field, assignedType: null });
+    for (const prop of owner.properties.values()) vars.set(prop.name.toLowerCase(), { ...prop, assignedType: null });
   }
   const method = v3FindMethodAt(info, line);
   const start = method ? method.startLine : 0;
@@ -5346,12 +6949,30 @@ function v33CodePrefix(rawPrefix) {
 }
 
 function v33IsInsideString(rawPrefix) {
-  let inString = false;
-  for (let i = 0; i < String(rawPrefix || '').length; i++) {
-    const ch = rawPrefix[i];
-    if (ch === '"') inString = !inString;
+  const text = String(rawPrefix || '');
+  let inNormal = false;
+  let inSmart = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (!inNormal && !inSmart && ch === '$' && next === '"') {
+      inSmart = true;
+      i++;
+      continue;
+    }
+    if (inSmart) {
+      if (ch === '"' && next === '$') {
+        inSmart = false;
+        i++;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      if (next === '"') { i++; continue; }
+      inNormal = !inNormal;
+    }
   }
-  return inString;
+  return inNormal || inSmart;
 }
 
 function v33CompletionContext(prefix) {
@@ -5387,6 +7008,10 @@ function v33DirectiveCompletions(rawPrefix, position) {
     ['#Include', 'Include another .bx file'],
     ['#Project', 'Generate a native .b4j/.b4a/.b4i project file'],
     ['#Package', 'Native B4X project package / application id'],
+    ['#BANanoApp', 'BANano app name used by B4X++ tooling / defaults'],
+    ['#BANanoTitle', 'BANano page title used by B4X++ tooling / defaults'],
+    ['#BANanoOutput', 'BANano output folder metadata for B4X++ tooling'],
+    ['#BANanoLiveSwap', 'BANano Live Code Swapping metadata for B4X++ tooling'],
     ['#ProjectDir', 'Native B4X project output folder'],
     ['#MainModule', 'Declare the generated main module'],
     ['#ProjectDependsOn', 'Native IDE project library dependency emitted as LibraryN=...'],
@@ -5476,9 +7101,11 @@ function v33ScopeCompletions(index, info, line, currentClass, options = {}) {
       item.sortText = '2_' + item.label;
       add(item);
     }
-    add(v3Completion('Me', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
-    add(v3Completion('This', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
-    if (currentClass.extendsName) add(v3Completion('Super', vscode.CompletionItemKind.Variable, `Parent ${currentClass.extendsName} instance`));
+    if (currentClass.kind === 'class') {
+      add(v3Completion('Me', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
+      add(v3Completion('This', vscode.CompletionItemKind.Variable, `Current ${currentClass.name} instance`));
+      if (currentClass.extendsName) add(v3Completion('Super', vscode.CompletionItemKind.Variable, `Parent ${currentClass.extendsName} instance`));
+    }
   } else if (info) {
     for (const method of info.methods.filter(m => m.ownerKind === 'module')) {
       const item = methodCompletionItem(method, method.ownerName || path.basename(info.file, '.bx'));
@@ -5513,8 +7140,11 @@ function v33VariableCompletion(variable) {
 function v33VisibleMethods(index, className) {
   const out = [];
   const seen = new Set();
-  const cls = index.classes.get(String(className || '').toLowerCase());
-  const owners = cls ? [cls, ...v3Ancestors(index, cls.name)] : [];
+  const keyName = String(className || '').toLowerCase();
+  const cls = index.classes.get(keyName);
+  const stat = index.staticCodes.get(keyName);
+  const intf = index.interfaces.get(keyName);
+  const owners = cls ? [cls, ...v3Ancestors(index, cls.name)] : (stat ? [stat] : (intf ? [intf] : []));
   for (const owner of owners) {
     for (const method of v3AllOwnerMethods(owner)) {
       if (!method || /^(Class_Globals|Process_Globals)$/i.test(method.name)) continue;
@@ -5575,6 +7205,16 @@ function v3MemberCompletions(index, typeName, options = {}) {
   }
   for (const owner of owners) {
     for (const prop of owner.properties.values()) addProp(prop, owner);
+    // Native B4X library sources often expose property accessors as
+    // getX / setX Subs. Surface them as X in member completion, otherwise
+    // chained APIs such as Layout.LastRow.Column(1).MarginTop feel broken.
+    for (const method of v3AllOwnerMethods(owner)) {
+      const accessor = String(method.name || '').match(/^(get|set)([A-Z_].*)$/);
+      if (!accessor || /^(Class_Globals|Process_Globals)$/i.test(method.name)) continue;
+      const propName = accessor[2];
+      const propType = accessor[1].toLowerCase() === 'get' ? (method.returnType || 'Object') : ((method.params && method.params[0] && method.params[0].type) || 'Object');
+      addProp({ kind: 'property', name: propName, type: propType, visibility: method.visibility || 'public', file: method.file, line: method.line }, owner);
+    }
     if (!options.staticOnly) for (const field of owner.fields.values()) addField(field, owner);
     for (const method of v3AllOwnerMethods(owner)) addMethod(method, owner);
   }
@@ -5584,9 +7224,9 @@ function v3MemberCompletions(index, typeName, options = {}) {
 
 function v3TopLevelCompletions(index) {
   const out = [];
-  for (const cls of index.classes.values()) out.push(v3Completion(cls.name, vscode.CompletionItemKind.Class, `B4X++ class${cls.extendsName ? ' extends ' + cls.extendsName : ''}`));
+  for (const cls of index.classes.values()) out.push(v3Completion(cls.name, vscode.CompletionItemKind.Class, `${cls.nativeB4X ? 'B4X native' : 'B4X++'} class${cls.extendsName ? ' extends ' + cls.extendsName : ''}`));
   for (const intf of index.interfaces.values()) out.push(v3Completion(intf.name, vscode.CompletionItemKind.Interface, 'B4X++ interface'));
-  for (const mod of index.staticCodes.values()) out.push(v3Completion(mod.name, vscode.CompletionItemKind.Module, 'B4X++ static module'));
+  for (const mod of index.staticCodes.values()) out.push(v3Completion(mod.name, vscode.CompletionItemKind.Module, `${mod.nativeB4X ? 'B4X native' : 'B4X++'} static module`));
   for (const t of Array.from(B4X_V3_TYPES.values())) out.push(v3Completion(t, vscode.CompletionItemKind.Value, 'B4X++ language type'));
   // Library / platform classes (XUI, B4XView, B4XCanvas, Form, etc.) are intentionally not injected here.
   // They appear through v315ExternalTypeCompletions only when the active project declares the matching library.
@@ -5626,23 +7266,37 @@ function v3AllOwnerMethods(owner) {
 }
 
 function v3FindMethodInType(index, typeName, methodName) {
-  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  const typeKey = String(typeName || '').toLowerCase();
+  const key = String(methodName || '').toLowerCase();
+  const cls = index.classes.get(typeKey);
   if (cls) return v3FindMethodInClass(index, cls.name, methodName, { includeAncestors: true });
-  const intf = index.interfaces.get(String(typeName || '').toLowerCase());
-  if (intf && intf.methods.has(String(methodName || '').toLowerCase())) return { owner: intf, method: intf.methods.get(String(methodName || '').toLowerCase()) };
-  const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
-  if (stat && stat.methods.has(String(methodName || '').toLowerCase())) return { owner: stat, method: stat.methods.get(String(methodName || '').toLowerCase()) };
+  const intf = index.interfaces.get(typeKey);
+  if (intf && intf.methods.has(key)) return { owner: intf, method: intf.methods.get(key) };
+  const stat = index.staticCodes.get(typeKey);
+  if (stat && stat.methods.has(key)) return { owner: stat, method: stat.methods.get(key) };
+  const externalType = index.externalTypes && index.externalTypes.get(typeKey);
+  if (externalType) {
+    const method = (externalType.methods || []).find(m => String(m.name || '').toLowerCase() === key);
+    if (method) return { owner: { name: externalType.name, kind: 'external', file: externalType.libraryFile || externalType.sourceFile || '' }, method: { kind: 'method', name: method.name, paramsRaw: method.paramsRaw || '', params: method.params || [], returnType: method.returnType || method.type || '', visibility: 'public', file: externalType.libraryFile || externalType.sourceFile || '', line: 0 } };
+  }
   return null;
 }
 
 function v3FindMethodsInType(index, typeName, methodName) {
-  const cls = index.classes.get(String(typeName || '').toLowerCase());
+  const typeKey = String(typeName || '').toLowerCase();
+  const cls = index.classes.get(typeKey);
   if (cls) return v3FindMethodsInClass(index, cls.name, methodName, { includeAncestors: true });
   const key = String(methodName || '').toLowerCase();
-  const intf = index.interfaces.get(String(typeName || '').toLowerCase());
+  const intf = index.interfaces.get(typeKey);
   if (intf) return v3OwnerMethodsByName(intf, key).map(method => ({ owner: intf, method }));
-  const stat = index.staticCodes.get(String(typeName || '').toLowerCase());
+  const stat = index.staticCodes.get(typeKey);
   if (stat) return v3OwnerMethodsByName(stat, key).map(method => ({ owner: stat, method }));
+  const externalType = index.externalTypes && index.externalTypes.get(typeKey);
+  if (externalType) {
+    return (externalType.methods || [])
+      .filter(m => String(m.name || '').toLowerCase() === key)
+      .map(method => ({ owner: { name: externalType.name, kind: 'external', file: externalType.libraryFile || externalType.sourceFile || '' }, method: { kind: 'method', name: method.name, paramsRaw: method.paramsRaw || '', params: method.params || [], returnType: method.returnType || method.type || '', visibility: 'public', file: externalType.libraryFile || externalType.sourceFile || '', line: 0 } }));
+  }
   return [];
 }
 
@@ -5657,6 +7311,17 @@ function v3FindMemberInType(index, typeName, memberName) {
     if (owner.fields.has(key)) return { owner, symbol: owner.fields.get(key) };
     if (owner.methods.has(key)) return { owner, symbol: owner.methods.get(key) };
     if (owner.properties.has(('get' + memberName).toLowerCase())) return { owner, symbol: owner.properties.get(('get' + memberName).toLowerCase()) };
+    const getter = owner.methods.get(('get' + memberName).toLowerCase());
+    if (getter) return { owner, symbol: { kind: 'property', name: memberName, type: getter.returnType || 'Object', visibility: getter.visibility || 'public', file: getter.file, line: getter.line } };
+    const setter = owner.methods.get(('set' + memberName).toLowerCase());
+    if (setter) return { owner, symbol: { kind: 'property', name: memberName, type: (setter.params && setter.params[0] && setter.params[0].type) || 'Object', visibility: setter.visibility || 'public', file: setter.file, line: setter.line } };
+  }
+  const externalType = index.externalTypes && index.externalTypes.get(String(typeName || '').toLowerCase());
+  if (externalType) {
+    const prop = (externalType.properties || []).find(p => String(p.name || '').toLowerCase() === key || ('get' + String(memberName || '')).toLowerCase() === String(p.name || '').toLowerCase());
+    if (prop) return { owner: { name: externalType.name, kind: 'external', file: externalType.libraryFile || externalType.sourceFile || '' }, symbol: { kind: 'property', name: prop.name, type: prop.type || 'Object', visibility: 'public', file: externalType.libraryFile || externalType.sourceFile || '', line: 0 } };
+    const method = (externalType.methods || []).find(m => String(m.name || '').toLowerCase() === key);
+    if (method) return { owner: { name: externalType.name, kind: 'external', file: externalType.libraryFile || externalType.sourceFile || '' }, method: { kind: 'method', name: method.name, paramsRaw: method.paramsRaw || '', params: method.params || [], returnType: method.returnType || method.type || '', visibility: 'public', file: externalType.libraryFile || externalType.sourceFile || '', line: 0 } };
   }
   return null;
 }
@@ -5715,18 +7380,21 @@ function v3ResolveSymbolAt(index, document, position) {
   const word = document.getText(range); const line = document.lineAt(position.line).text;
   const resumableTarget = v343ResolveResumableSubNavigation(index, info, document, position, word, range);
   if (resumableTarget) return resumableTarget;
-  const dotted = getDottedMemberAt(line, range);
-  if (dotted && dotted.member.toLowerCase() === word.toLowerCase()) {
-    const receiver = dotted.receiver;
+  const dottedExpr = v317DottedMemberExpressionAt(document, position, range);
+  if (dottedExpr && dottedExpr.member.toLowerCase() === word.toLowerCase()) {
+    const receiverExpr = dottedExpr.receiverExpr;
     let found = null;
     const currentClass = v3FindClassAt(index, info, position.line);
-    if (/^Super$/i.test(receiver) && currentClass && currentClass.extendsName) found = v3FindMethodInClass(index, currentClass.extendsName, word, { includeAncestors: true });
-    else if (/^(This|Me)$/i.test(receiver) && currentClass) found = v3FindMemberInType(index, currentClass.name, word);
-    else { const resolved = v3ResolveReceiverType(index, info, position.line, receiver); if (resolved) found = v3FindMemberInType(index, resolved.type, word) || v3FindMethodInType(index, resolved.type, word); }
+    if (/^Super$/i.test(receiverExpr) && currentClass && currentClass.extendsName) found = v3FindMethodInClass(index, currentClass.extendsName, word, { includeAncestors: true });
+    else if (/^(This|Me)$/i.test(receiverExpr) && currentClass) found = v3FindMemberInType(index, currentClass.name, word);
+    else {
+      const resolved = v317ResolveExpressionType(index, info, position.line, receiverExpr);
+      if (resolved) found = v3FindMemberInType(index, resolved.type, word) || v3FindMethodInType(index, resolved.type, word);
+    }
     const symbol = found && (found.symbol || found.method);
     if (symbol) return { ...symbol, ownerName: found.owner && found.owner.name, range };
   }
-  const owner = v3FindClassAt(index, info, position.line) || info.staticCodes.find(s => position.line >= s.startLine && position.line <= s.endLine) || info.interfaces.find(s => position.line >= s.startLine && position.line <= s.endLine);
+  const owner = v3FindOwnerAt(index, info, position.line);
   if (owner) {
     const key = word.toLowerCase();
     if (owner.properties.has(key)) return { ...owner.properties.get(key), ownerName: owner.name, range };
@@ -5747,9 +7415,9 @@ function v3SymbolMarkdown(symbol) {
     symbol.file ? `File: ${symbol.file}` : '',
     Number.isInteger(symbol.line) ? `Line: ${symbol.line + 1}` : ''
   ].filter(Boolean).join('\n\n');
-  if (symbol.kind === 'class') return `**class ${symbol.name}**${symbol.extendsName ? ` extends ${symbol.extendsName}` : ''}\n\nB4X++ class. Edit the .bx source, then regenerate .bas when needed.\n\n${debugInfo}`;
+  if (symbol.kind === 'class') return `**class ${symbol.name}**${symbol.extendsName ? ` extends ${symbol.extendsName}` : ''}\n\nB4X / B4X++ class symbol.\n\n${debugInfo}`;
   if (symbol.kind === 'interface') return `**interface ${symbol.name}**\n\nContract used by B4X++ classes / Poly dispatch.\n\n${debugInfo}`;
-  if (symbol.kind === 'staticCode') return `**static module ${symbol.name}**\n\nB4X++ helper module generated as a B4X code module.\n\n${debugInfo}`;
+  if (symbol.kind === 'staticCode') return `**static module ${symbol.name}**\n\nB4X / B4X++ static code module.\n\n${debugInfo}`;
   if (symbol.kind === 'property') {
     const setterHint = symbol.mode === 'readonly' ? 'This property is readonly.' : `Inside the owning class you can write **${symbol.name} = value**. The transpiler generates **set${symbol.name}(value)**.`;
     const namingHint = `Prefer constructor / Sub parameters such as **a${symbol.name}** instead of **${symbol.name}**, **m${symbol.name}**, module names, method names, or B4X keywords.`;
@@ -5768,18 +7436,23 @@ function v3MethodDetail(m) { return `${m.name}${m.paramsRaw ? '(' + m.paramsRaw 
 function v3ParseCallAt(document, position) {
   const text = document.lineAt(position.line).text.slice(0, position.character);
   const idx = text.lastIndexOf('('); if (idx < 0) return null;
-  const before = text.slice(0, idx);
-  const m = before.match(/(?:(\b[A-Za-z_][A-Za-z0-9_]*)\s*\.)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/);
-  if (!m) return null;
+  const before = text.slice(0, idx).trimEnd();
+  const nameMatch = before.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+  const receiverPrefix = before.slice(0, nameMatch.index).trimEnd();
+  let receiver = '';
+  if (receiverPrefix.endsWith('.')) receiver = v318ExpressionTail(receiverPrefix.slice(0, -1).trim());
   const argsText = text.slice(idx + 1);
   let inString = false; let depth = 0; let comma = 0;
   for (let i = 0; i < argsText.length; i++) {
     const ch = argsText[i];
-    if (ch === '"') inString = !inString;
+    const next = argsText[i + 1];
+    if (ch === '"') { if (inString && next === '"') { i++; continue; } inString = !inString; continue; }
     if (inString) continue;
     if (ch === '(') depth++; else if (ch === ')' && depth > 0) depth--; else if (ch === ',' && depth === 0) comma++;
   }
-  return { receiver: m[1] || '', name: m[2], argumentIndex: comma };
+  return { receiver, name, argumentIndex: comma };
 }
 
 function v3BuiltinMembers(receiver, typeName) {
@@ -5899,6 +7572,93 @@ function v343FindCallableInScope(index, info, line, name) {
   return null;
 }
 
+
+//────────────────────────────────────────────────────────────
+// Native B4X project/code navigation (.bas/.b4j/.b4a/.b4i)
+//────────────────────────────────────────────────────────────
+class B4XNativeNavigationProvider {
+  provideDefinition(document, position) {
+    const interpolationTarget = b4xppResolveInterpolationSymbolTarget(document, position);
+    if (interpolationTarget) return toLocation(interpolationTarget);
+    if (isNativeB4XProjectFile(document.uri.fsPath)) {
+      const target = getNativeProjectModuleTargetAt(document, position);
+      if (target && target.file && fs.existsSync(target.file)) return new vscode.Location(vscode.Uri.file(target.file), new vscode.Position(0, 0));
+    }
+    const includeTarget = getIncludeTargetAt(document, position);
+    if (includeTarget) {
+      const resolved = resolveIncludeTargetForDocument(document, includeTarget.value);
+      if (resolved && fs.existsSync(resolved)) return new vscode.Location(vscode.Uri.file(resolved), new vscode.Position(0, 0));
+    }
+    const index = buildV3Index(document);
+    const symbol = v32ResolveSymbolTarget(index, document, position);
+    if (symbol && symbol.file) return toLocation(symbol);
+    return null;
+  }
+
+  provideDocumentLinks(document) {
+    const links = [];
+    if (isNativeB4XProjectFile(document.uri.fsPath)) {
+      for (const target of getNativeProjectModuleTargets(document)) {
+        if (!target.file || !fs.existsSync(target.file)) continue;
+        const link = new vscode.DocumentLink(target.range, vscode.Uri.file(target.file));
+        link.tooltip = `Open ${path.basename(target.file)}`;
+        links.push(link);
+      }
+    }
+    for (let i = 0; i < document.lineCount; i++) {
+      const text = document.lineAt(i).text;
+      const match = text.match(/^\s*#Include\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+      if (!match) continue;
+      const value = match[1] || match[2] || match[3] || '';
+      const startChar = match.index + match[0].indexOf(value);
+      const range = new vscode.Range(i, startChar, i, startChar + value.length);
+      const resolved = resolveIncludeTargetForDocument(document, value);
+      if (resolved && fs.existsSync(resolved)) links.push(new vscode.DocumentLink(range, vscode.Uri.file(resolved)));
+    }
+    return links;
+  }
+}
+
+function getNativeProjectModuleTargetAt(document, position) {
+  for (const target of getNativeProjectModuleTargets(document)) {
+    if (position.line === target.range.start.line && position.character >= target.range.start.character && position.character <= target.range.end.character) return target;
+  }
+  return null;
+}
+
+function getNativeProjectModuleTargets(document) {
+  const out = [];
+  if (!document || !isNativeB4XProjectFile(document.uri.fsPath)) return out;
+  const dir = path.dirname(document.uri.fsPath);
+  for (let i = 0; i < document.lineCount; i++) {
+    const raw = document.lineAt(i).text;
+    const parsed = parseNativeB4XProjectModuleLine(raw, i, dir);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+function parseNativeB4XProjectModuleLine(raw, lineIndex, projectDir) {
+  const code = String(raw || '').trim();
+  if (!code || code.startsWith('#') || code.startsWith(';')) return null;
+  const m = code.match(/^(?:Module|Class|ClassModule|StaticCode|CodeModule|Activity|ActivityModule|Service|ServiceModule|Receiver|ReceiverModule|B4XPage|B4XPages)\d*\s*=\s*(.+)$/i);
+  if (!m) return null;
+  let value = (m[1] || '').trim();
+  if (!value) return null;
+  value = value.split(',').pop().trim();
+  value = value.replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+  const moduleName = path.basename(value, path.extname(value));
+  if (!moduleName) return null;
+  const candidates = [];
+  if (/\.bas$/i.test(value)) candidates.push(path.resolve(projectDir, value));
+  candidates.push(path.resolve(projectDir, `${moduleName}.bas`));
+  candidates.push(path.resolve(projectDir, 'Objects', 'src', `${moduleName}.bas`));
+  const file = candidates.find(f => fs.existsSync(f)) || candidates[0];
+  const valueIndexInRaw = raw.indexOf(moduleName);
+  const start = valueIndexInRaw >= 0 ? valueIndexInRaw : Math.max(0, raw.length - moduleName.length);
+  return { name: moduleName, file, range: new vscode.Range(lineIndex, start, lineIndex, start + moduleName.length) };
+}
+
 //────────────────────────────────────────────────────────────
 // B4X++ v0.3.2 navigation + B4XLib / CustomView assistant
 //────────────────────────────────────────────────────────────
@@ -5925,8 +7685,22 @@ async function validateB4XLibCustomViewsCommand() {
   else vscode.window.showInformationMessage(message);
 }
 
+
+function b4xppResolveInterpolationSymbolTarget(document, position) {
+  if (!b4xppIsInsideBananoB4XInterpolation(document, position)) return null;
+  const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+  if (!range) return null;
+  const index = buildV3Index(document);
+  const info = v3GetFileInfo(index, document.uri.fsPath);
+  if (!info) return null;
+  const word = document.getText(range);
+  return v32ResolveLocalVariable(index, info, position.line, word, range) || v3ResolveSymbolAt(index, document, position) || null;
+}
+
 class B4XPPV32NavigationProvider {
   provideDefinition(document, position) {
+    const interpolationTarget = b4xppResolveInterpolationSymbolTarget(document, position);
+    if (interpolationTarget) return toLocation(interpolationTarget);
     const includeTarget = getIncludeTargetAt(document, position);
     if (includeTarget) {
       const resolved = resolveIncludeTargetForDocument(document, includeTarget.value);
@@ -6076,6 +7850,8 @@ function v32ResolveLocalVariable(index, info, line, word, clickedRange) {
       return { ...decl, kind: 'local', scopeStart: i, scopeEnd: method.endLine };
     }
   }
+  const moduleField = info.moduleFields && info.moduleFields.get(key);
+  if (moduleField) return { ...moduleField, kind: 'field', scopeStart: 0, scopeEnd: Math.max(0, info.lines.length - 1) };
   return null;
 }
 
@@ -6330,6 +8106,17 @@ module.exports = {
     resolveConfiguredIdeProjectDir,
     parseWaitForCompleteDeclarationLine,
     v3ParseFile,
+    v3CollectVariables,
+    v3ResolveReceiverType,
+    v317ResolveExpressionType,
+    v317CompletionReceiverExpression,
+    v317DottedMemberExpressionAt,
+    v318ExpressionTail,
+    v3FindMemberInType,
+    v3FindMethodInType,
+    v3ParseCallAt,
+    collectNativeB4XCodeFiles,
+    parseNativeB4XProjectModuleLine,
     shouldPublishDiagnostic,
     isLineInsideAsyncSub
   }

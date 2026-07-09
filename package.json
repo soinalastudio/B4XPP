@@ -1,8 +1,8 @@
 {
   "name": "b4xpp",
   "displayName": "B4X++",
-  "description": "VS Code extension for B4X++ v0.5.0: consolidated OOP, async, generics, packaging, build, and remap tooling for B4X.",
-  "version": "0.5.0",
+  "description": "VS Code extension for B4X++ v0.6.0: BANano MVP, native B4X tooling, web syntax support and chained initializer IntelliSense.",
+  "version": "0.6.0",
   "publisher": "soinala-studio",
   "license": "MIT",
   "engines": {
@@ -13,7 +13,30 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "*",
+    "onLanguage:b4xpp",
+    "onLanguage:b4x",
+    "onCommand:b4xpp.generateBas",
+    "onCommand:b4xpp.createExample",
+    "onCommand:b4xpp.showGeneratedFolder",
+    "onCommand:b4xpp.createIdeProject",
+    "onCommand:b4xpp.syncDirectiveProject",
+    "onCommand:b4xpp.syncProject",
+    "onCommand:b4xpp.buildB4XLib",
+    "onCommand:b4xpp.buildB4XPPLib",
+    "onCommand:b4xpp.remapB4XErrors",
+    "onCommand:b4xpp.generateDebugBundle",
+    "onCommand:b4xpp.buildB4JWithRemap",
+    "onCommand:b4xpp.buildB4AWithRemap",
+    "onCommand:b4xpp.buildB4iWithRemap",
+    "onCommand:b4xpp.buildCurrentPlatformWithRemap",
+    "onCommand:b4xpp.refreshIntelliSense",
+    "onCommand:b4xpp.configureB4XPPSettings",
+    "onCommand:b4xpp.configureProjectSettings",
+    "onCommand:b4xpp.validateB4XLibCustomViews",
+    "onCommand:b4xpp.serveBananoOutput",
+    "onCommand:b4xpp.runBananoJar",
+    "onCommand:b4xpp.forceB4XLanguage"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -28,18 +51,56 @@
           ".bx"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "b4x",
+        "aliases": [
+          "B4X",
+          "B4A/B4J/B4i",
+          "b4x"
+        ],
+        "extensions": [
+          ".bas",
+          ".b4j",
+          ".b4a",
+          ".b4i"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
         "language": "b4xpp",
         "scopeName": "source.b4xpp",
-        "path": "./syntaxes/b4xpp.tmLanguage.json"
+        "path": "./syntaxes/b4xpp.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.css.b4xpp": "css",
+          "meta.embedded.block.javascript.b4xpp": "javascript",
+          "meta.embedded.block.html.b4xpp": "html",
+          "meta.embedded.inline.html.b4xpp": "html",
+          "meta.embedded.inline.javascript.b4xpp": "javascript"
+        }
+      },
+      {
+        "language": "b4x",
+        "scopeName": "source.b4x",
+        "path": "./syntaxes/b4x.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.css.b4x": "css",
+          "meta.embedded.block.javascript.b4x": "javascript",
+          "meta.embedded.block.html.b4x": "html",
+          "meta.embedded.inline.html.b4x": "html",
+          "meta.embedded.inline.javascript.b4x": "javascript"
+        }
       }
     ],
     "snippets": [
       {
         "language": "b4xpp",
+        "path": "./snippets/b4xpp.json"
+      },
+      {
+        "language": "b4x",
         "path": "./snippets/b4xpp.json"
       }
     ],
@@ -61,12 +122,17 @@
       },
       {
         "command": "b4xpp.createIdeProject",
-        "title": "Create B4A/B4J/B4i Project",
+        "title": "Create B4A/B4J/B4i/BANano Project",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.syncDirectiveProject",
         "title": "Sync #Project",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.syncProject",
+        "title": "Sync #Project (Compatibility Alias)",
         "category": "B4X++"
       },
       {
@@ -115,13 +181,33 @@
         "category": "B4X++"
       },
       {
+        "command": "b4xpp.configureB4XPPSettings",
+        "title": "Configure B4X++ Settings",
+        "category": "B4X++"
+      },
+      {
         "command": "b4xpp.configureProjectSettings",
-        "title": "Configure Project Settings",
+        "title": "Configure Current Project Settings",
         "category": "B4X++"
       },
       {
         "command": "b4xpp.validateB4XLibCustomViews",
         "title": "Validate B4XLib / CustomViews",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.serveBananoOutput",
+        "title": "Serve BANano Output",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.runBananoJar",
+        "title": "Run BANano Generator JAR",
+        "category": "B4X++"
+      },
+      {
+        "command": "b4xpp.forceB4XLanguage",
+        "title": "Set Current File Language to B4X",
         "category": "B4X++"
       }
     ],
@@ -131,122 +217,146 @@
         "b4xpp.sourceDir": {
           "type": "string",
           "default": "src-b4xpp",
-          "description": "Folder containing B4X++ source files (.bx)."
+          "description": "Folder containing B4X++ source files (.bx).",
+          "scope": "resource"
         },
         "b4xpp.outputDir": {
           "type": "string",
           "default": "generated-b4x",
-          "description": "Output folder for generated classic B4X files (.bas)."
+          "description": "Output folder for generated classic B4X files (.bas).",
+          "scope": "resource"
         },
         "b4xpp.mainModuleName": {
           "type": "string",
           "default": "",
-          "description": "Main module name when no #MainModule directive is found. Leave empty to avoid generating an implicit main module."
+          "description": "Main module name when no #MainModule directive is found. Leave empty to avoid generating an implicit main module.",
+          "scope": "resource"
         },
         "b4xpp.addGeneratedHeader": {
           "type": "boolean",
           "default": true,
-          "description": "Add an AUTO-GENERATED header to generated .bas files."
+          "description": "Add an AUTO-GENERATED header to generated .bas files.",
+          "scope": "resource"
         },
         "b4xpp.overwriteGeneratedFiles": {
           "type": "boolean",
           "default": true,
-          "description": "Overwrite existing generated .bas files."
+          "description": "Overwrite existing generated .bas files.",
+          "scope": "resource"
         },
         "b4xpp.includeTimestamp": {
           "type": "boolean",
           "default": false,
-          "description": "Add a generation timestamp to the header. Disabled by default to avoid noisy diffs."
+          "description": "Add a generation timestamp to the header. Disabled by default to avoid noisy diffs.",
+          "scope": "resource"
         },
         "b4xpp.projectDir": {
           "type": "string",
           "default": "b4x-ide-projects",
-          "description": "Output folder for generated B4A/B4J/B4i projects."
+          "description": "Output folder for generated B4A/B4J/B4i projects.",
+          "scope": "resource"
         },
         "b4xpp.packageName": {
           "type": "string",
           "default": "b4xpp.example",
-          "description": "Package / application id used in generated B4X project files."
+          "description": "Package / application id used in generated B4X project files.",
+          "scope": "resource"
         },
         "b4xpp.mobileMainModuleName": {
           "type": "string",
           "default": "B4XPPMain",
-          "description": "Code module name used to host the B4X++ #MainModule in B4A/B4i projects, avoiding conflicts with the native Main module."
+          "description": "Code module name used to host the B4X++ #MainModule in B4A/B4i projects, avoiding conflicts with the native Main module.",
+          "scope": "resource"
         },
         "b4xpp.b4xlibDir": {
           "type": "string",
           "default": "b4x-libs",
-          "description": "Output folder for generated .b4xlib files."
+          "description": "Output folder for generated .b4xlib files.",
+          "scope": "resource"
         },
         "b4xpp.b4xpplibDir": {
           "type": "string",
           "default": "b4xpp-libs",
-          "description": "Output folder for generated .b4xpplib source packages."
+          "description": "Output folder for generated .b4xpplib source packages.",
+          "scope": "resource"
         },
         "b4xpp.b4jBuildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional custom B4J build shell command. If empty, B4X++ uses B4JBuilder.exe. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}. Example: \"C:/Program Files/Anywhere Software/B4J/B4JBuilder.exe\" -Task=Build -Project={project} -BaseFolder={projectDir} -ShowWarnings=True"
+          "description": "Optional custom B4J build shell command. If empty, B4X++ uses B4JBuilder.exe. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}. Example: \"C:/Program Files/Anywhere Software/B4J/B4JBuilder.exe\" -Task=Build -Project={project} -BaseFolder={projectDir} -ShowWarnings=True",
+          "scope": "application"
         },
         "b4xpp.b4aBuildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional custom B4A build shell command. If empty, B4X++ uses B4ABuilder.exe when found. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}."
+          "description": "Optional custom B4A build shell command. If empty, B4X++ uses B4ABuilder.exe when found. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}.",
+          "scope": "application"
         },
         "b4xpp.b4iBuildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional custom B4i build shell command. B4X++ does not assume an official B4i CLI; this command is used as-is and its output is remapped. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}."
+          "description": "Optional custom B4i build shell command. B4X++ does not assume an official B4i CLI; this command is used as-is and its output is remapped. Placeholders: {project}, {workspace}, {projectDir}, {configuration}, {task}.",
+          "scope": "application"
         },
         "b4xpp.b4j.builderPath": {
           "type": "string",
           "default": "",
-          "description": "Path to B4JBuilder.exe. If empty, B4X++ tries C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe and Program Files (x86)."
+          "description": "Path to B4JBuilder.exe. If empty, B4X++ tries C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe and Program Files (x86).",
+          "scope": "application"
         },
         "b4xpp.b4a.builderPath": {
           "type": "string",
           "default": "",
-          "description": "Path to B4ABuilder.exe. If empty, B4X++ tries common B4A / Basic4android install folders."
+          "description": "Path to B4ABuilder.exe. If empty, B4X++ tries common B4A / Basic4android install folders.",
+          "scope": "application"
         },
         "b4xpp.b4i.builderPath": {
           "type": "string",
           "default": "",
-          "description": "Optional path to a custom B4i command-line builder. Usually prefer b4xpp.b4iBuildCommand because B4i uses a Mac builder workflow."
+          "description": "Optional path to a custom B4i command-line builder. Usually prefer b4xpp.b4iBuildCommand because B4i uses a Mac builder workflow.",
+          "scope": "application"
         },
         "b4xpp.buildConfiguration": {
           "type": "string",
           "default": "Default",
-          "description": "B4X build configuration passed as -Configuration=... to B4JBuilder.exe / B4ABuilder.exe."
+          "description": "B4X build configuration passed as -Configuration=... to B4JBuilder.exe / B4ABuilder.exe.",
+          "scope": "resource"
         },
         "b4xpp.buildTask": {
           "type": "string",
           "default": "Build",
-          "description": "B4X builder task passed as -Task=... . Default is Build."
+          "description": "B4X builder task passed as -Task=... . Default is Build.",
+          "scope": "application"
         },
         "b4xpp.buildShowWarnings": {
           "type": "boolean",
           "default": true,
-          "description": "Pass -ShowWarnings=True to B4JBuilder.exe / B4ABuilder.exe."
+          "description": "Pass -ShowWarnings=True to B4JBuilder.exe / B4ABuilder.exe.",
+          "scope": "application"
         },
         "b4xpp.buildUseBaseFolder": {
           "type": "boolean",
           "default": true,
-          "description": "Pass -BaseFolder=<project folder> to B4JBuilder.exe / B4ABuilder.exe. Disable if your builder version has issues with BaseFolder."
+          "description": "Pass -BaseFolder=<project folder> to B4JBuilder.exe / B4ABuilder.exe. Disable if your builder version has issues with BaseFolder.",
+          "scope": "application"
         },
         "b4xpp.writeLineSourceMap": {
           "type": "boolean",
           "default": true,
-          "description": "Write best-effort generated-line to .bx source mappings in .b4xpp/sourceMap.json. Used for compiler/runtime error remapping."
+          "description": "Write best-effort generated-line to .bx source mappings in .b4xpp/sourceMap.json. Used for compiler/runtime error remapping.",
+          "scope": "resource"
         },
         "b4xpp.enableSemanticDiagnostics": {
           "type": "boolean",
           "default": true,
-          "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, Extends and CustomView color-property mistakes."
+          "description": "Enable B4X++ workspace semantic diagnostics for types, member access, #Include, Extends and CustomView color-property mistakes.",
+          "scope": "application"
         },
         "b4xpp.validation.strict": {
           "type": "boolean",
           "default": false,
-          "description": "Enable stricter B4X++ validation: unknown identifiers and obvious semantic issues become errors before generating / building in B4X."
+          "description": "Enable stricter B4X++ validation: unknown identifiers and obvious semantic issues become errors before generating / building in B4X.",
+          "scope": "application"
         },
         "b4xpp.platform": {
           "type": "string",
@@ -255,9 +365,11 @@
             "auto",
             "b4j",
             "b4a",
-            "b4i"
+            "b4i",
+            "banano"
           ],
-          "description": "Target platform used for library metadata indexing (.xml and .b4xlib) when no #Project directive is available."
+          "description": "Target platform used for library metadata indexing (.xml and .b4xlib) when no #Project directive is available.",
+          "scope": "resource"
         },
         "b4xpp.b4j.internalLibraryDirs": {
           "type": "array",
@@ -265,7 +377,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4J internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4J internal library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
         },
         "b4xpp.b4j.additionalLibraryDirs": {
           "type": "array",
@@ -273,7 +386,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4J additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4J additional library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
         },
         "b4xpp.b4a.internalLibraryDirs": {
           "type": "array",
@@ -281,7 +395,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4A internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4A internal library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
         },
         "b4xpp.b4a.additionalLibraryDirs": {
           "type": "array",
@@ -289,7 +404,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4A additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4A additional library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
         },
         "b4xpp.b4i.internalLibraryDirs": {
           "type": "array",
@@ -297,7 +413,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4i internal library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4i internal library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
         },
         "b4xpp.b4i.additionalLibraryDirs": {
           "type": "array",
@@ -305,10 +422,51 @@
             "type": "string"
           },
           "default": [],
-          "description": "B4i additional library folders containing .xml files and .b4xlib and .b4xpplib packages."
+          "description": "B4i additional library folders containing .xml files and .b4xlib and .b4xpplib packages.",
+          "scope": "application"
+        },
+        "b4xpp.bananoServer.port": {
+          "type": "number",
+          "default": 8088,
+          "description": "Port used by the integrated local HTTP server for generated BANano output. If busy, B4X++ tries the next ports.",
+          "scope": "application"
+        },
+        "b4xpp.bananoServer.openBrowser": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the browser automatically after B4X++ starts the integrated BANano output server.",
+          "scope": "application"
+        },
+        "b4xpp.banano.runJarAfterBuild": {
+          "type": "boolean",
+          "default": true,
+          "description": "For #Project BANano, run the generated Objects/<ProjectName>.jar after a successful B4JBuilder build so BANano produces index.html / JavaScript.",
+          "scope": "application"
+        },
+        "b4xpp.banano.promptServeAfterRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "After the BANano generator jar completes, ask whether to serve the generated index.html with the integrated local HTTP server.",
+          "scope": "application"
+        },
+        "b4xpp.banano.javaPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to java/java.exe used to run the generated BANano jar. If empty, B4X++ tries JAVA_HOME and then java from PATH.",
+          "scope": "application"
+        },
+        "b4xpp.banano.javaFxLibPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional JavaFX lib folder used to run BANano generator jars, for example C:\\b4j\\java\\javafx\\lib. If empty, B4X++ tries to infer it from javaPath / B4J install paths.",
+          "scope": "application"
         }
       }
     }
   },
-  "b4xppBuild": "v050-consolidated-release"
+  "b4xppBuild": "v0517-chained-member-intellisense",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/soinalastudio/B4XPP.git"
+  }
 }

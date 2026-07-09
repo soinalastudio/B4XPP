@@ -1,91 +1,120 @@
 # B4X++ for Visual Studio Code
 
-B4X++ is a source-to-source layer for B4X. You write `.bx` files with a cleaner, more expressive syntax, and the extension generates normal B4J, B4A, and B4i `.bas` files and project files that the official B4X tools can compile.
+B4X++ is a source-to-source layer and VS Code toolchain for B4X. You write `.bx` files with a more expressive syntax and stronger editor support; B4X++ generates ordinary B4J, B4A, B4i and BANano-compatible `.bas` files and project files that can still be opened and compiled by the official B4X IDEs.
 
-B4X++ does not replace B4X. It stays deliberately close to the B4X runtime and compiler model: classes become classic B4X class modules, async code becomes native `ResumableSub` / `Wait For`, and generated projects remain ordinary `.b4j`, `.b4a`, or `.b4i` projects.
+B4X++ does **not** replace B4X. It keeps the final output close to classic B4X: inheritance is flattened, async code becomes native `ResumableSub` / `Wait For`, generics are specialized into concrete modules, and native directives such as `#DesignerProperty`, `#Event`, `#If B4J`, `#If CSS` and `#If JAVASCRIPT` are preserved.
 
-The goal is practical: make medium and large B4X projects easier to structure, navigate, reuse, package, and build, while still producing B4X code that can be inspected and opened in the official IDEs.
+## v0.6.0 highlights
 
-## Status
+This release consolidates the 0.5.1 → 0.5.18 work into the first BANano-oriented milestone:
 
-`v0.5.0` collects and cleans up the improvements made during the 0.4.x series:
+- BANano project target with `#Project BANano`.
+- Generated B4J/BANano project capable of producing `index.html`, CSS and JavaScript.
+- BANanoSkeleton sample project.
+- BANano build workflow: sync project, build jar with `B4JBuilder`, run jar to generate web output, then optionally serve the generated `index.html` locally.
+- Integrated BANano local server to avoid browser `file://` CORS / manifest / live.js problems.
+- JavaFX-aware BANano jar runner with `javaPath` and `javaFxLibPath` settings.
+- Native B4X browsing for `.bas`, `.b4j`, `.b4a`, `.b4i` with syntax coloring, document symbols, hover and navigation.
+- Global B4X++ settings UI separated from current project settings UI.
+- BANano-aware syntax highlighting for `#BANano...`, `#If CSS`, `#If JAVASCRIPT`, `#If JS`, `#If SmartJavaScript`, SmartStrings and embedded HTML.
+- Lightweight HTML/CSS/JS completions in BANano embedded web zones.
+- Go to Definition / hover for B4X SmartString interpolation islands such as `${name}`.
+- BANano and BANanoSkeleton IntelliSense from `.xml`, `.b4xlib`, workspace sources and fallbacks.
+- Member IntelliSense for variables declared in `Process_Globals` and `Class_Globals`.
+- Chained member IntelliSense such as `Layout.LastRow.Column(1).MarginTop`.
+- Chained initializer IntelliSense inside assignments such as `Dim tp As SKTagPicker = Layout.LastRow.Column(1).Add.TagPicker(...)`.
+- B4X++ OOP, generics, closures, async/await, `.b4xlib`, `.b4xpplib`, project sync and compiler error remapping from the previous milestones.
 
-- natural OOP syntax: `Class`, `Interface`, `Constructor`, `Property`, `StaticCode`;
-- legacy compatibility for `#Class`, `#Constructor`, `#Interface`, `#StaticCode`, and matching `#End ...` forms;
-- clear split between B4X++ `Property` and native B4X `#Property`;
-- inheritance flattening, `Super`, `This`, `Override`, `Virtual`, `Abstract`, `Final`, `Protected`;
-- interfaces and explicit or natural polymorphism with `Poly`;
-- generic source specialization with `Type(Of T)` syntax;
-- closures / anonymous `Sub` literals;
-- `Async Sub` and `Await` lowered to native B4X resumable subs;
-- `.b4xlib` and `.b4xpplib` packaging;
-- B4J / B4A / B4i project sync;
-- native builder commands with compiler error remapping;
-- IntelliSense, hover, diagnostics, Go to Definition, and source maps.
+The BANano visual designer is intentionally **not** included yet. v0.6.0 focuses on making BANano projects compile, generate web output, serve locally and feel readable/editable inside VS Code.
 
-## Quick Start
+## Installation
 
-Create a `.bx` entry file:
+Install the `.vsix` package from VS Code:
 
-```b4x
-#Project B4J-NonUI AnimalDemo
-#Package b4xpp.examples.animals
-#ProjectDir b4x-ide-projects/AnimalDemo-b4j-nonui
-#MainModule Main
-
-#Include "contracts/IAnimal.bx"
-#Include "models/Animal.bx"
-#Include "models/Dog.bx"
-
-Sub Process_Globals
-End Sub
-
-Sub AppStart (Args() As String)
-    Dim dogInstance As Dog
-    dogInstance.Initialize("Buddy")
-    Log(dogInstance.Speak)
-End Sub
+```bash
+code --install-extension b4xpp-0.6.0.vsix --force
 ```
 
 Then run:
 
-1. `B4X++: Sync #Project` to generate the native B4J / B4A / B4i project.
-2. `B4X++: Generate .bas Files` to inspect generated modules.
-3. `B4X++: Build Current #Project + Remap Errors` to compile with the configured B4X builder and map errors back to `.bx` lines.
+```text
+Developer: Reload Window
+```
 
-## Project Layout
+Useful first commands:
 
-Recommended layout:
+```text
+B4X++: Configure B4X++ Settings
+B4X++: Configure Current Project Settings
+B4X++: Create Example Project
+B4X++: Sync #Project
+B4X++: Build Current #Project + Remap Errors
+```
+
+## Project layout
+
+Recommended workspace structure:
 
 ```text
 src-b4xpp/
-  Demo.bx
-  contracts/
-    IAnimal.bx
+  Main.bx
   models/
-    Animal.bx
-    Dog.bx
+  contracts/
 generated-b4x/
 b4x-ide-projects/
 b4x-libs/
 b4xpp-libs/
+.vscode/
+  settings.json
 ```
 
-Default folders can be changed in VS Code settings:
+Generated files are normal B4X files. You can inspect them in `generated-b4x` or open the native project under `b4x-ide-projects`.
+
+## Settings model
+
+B4X++ separates global toolchain settings from project-local settings.
+
+### Global B4X++ settings
+
+Use:
+
+```text
+B4X++: Configure B4X++ Settings
+```
+
+Typical global settings:
 
 ```json
 {
-  "b4xpp.sourceDir": "src-b4xpp",
-  "b4xpp.outputDir": "generated-b4x",
-  "b4xpp.projectDir": "b4x-ide-projects",
-  "b4xpp.b4xlibDir": "b4x-libs",
-  "b4xpp.b4xpplibDir": "b4xpp-libs"
+  "b4xpp.b4j.builderPath": "C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe",
+  "b4xpp.b4j.internalLibraryDirs": [
+    "C:\\Program Files\\Anywhere Software\\B4J\\Libraries",
+    "C:\\dev\\b4j\\libraries"
+  ],
+  "b4xpp.b4j.additionalLibraryDirs": [],
+  "b4xpp.banano.javaPath": "C:\\b4j\\java\\bin\\java.exe",
+  "b4xpp.banano.javaFxLibPath": "C:\\b4j\\java\\javafx\\lib",
+  "b4xpp.banano.runJarAfterBuild": true,
+  "b4xpp.banano.promptServeAfterRun": true,
+  "b4xpp.bananoServer.port": 8088
 }
 ```
 
-## Language Directives
+These are user-level settings and are shared by all projects.
 
-Project, packaging, include, and platform directives keep the `#` prefix:
+### Current project settings
+
+Use:
+
+```text
+B4X++: Configure Current Project Settings
+```
+
+Project settings are the values that belong to the current workspace or `.bx` project: `sourceDir`, `outputDir`, `projectDir`, platform, package name, main module and project directives.
+
+## B4X++ project directives
+
+Project, packaging, dependency and BANano directives keep the `#` prefix.
 
 | Directive | Purpose |
 | --- | --- |
@@ -93,49 +122,176 @@ Project, packaging, include, and platform directives keep the `#` prefix:
 | `#Project B4J-UI Name` | Generate a native B4J UI project. |
 | `#Project B4A Name` | Generate a native B4A project. |
 | `#Project B4i Name` | Generate a native B4i project. |
+| `#Project BANano Name` | Generate a B4J/BANano web project. |
 | `#Package com.example.app` | Native package / application id. |
 | `#ProjectDir path` | Native project output folder. |
-| `#MainModule Main` | Main `.bx` module for generated project entry. |
+| `#MainModule Main` | Entry module. |
 | `#Include "file.bx"` | Include another B4X++ source file. |
-| `#ProjectB4JDependsOn jXUI` | Native B4J project dependency. |
-| `#ProjectB4ADependsOn XUI` | Native B4A project dependency. |
-| `#ProjectB4iDependsOn iXUI` | Native B4i project dependency. |
-| `#B4XLib Name` | Generate a `.b4xlib`. |
-| `#B4XPPLib Name` | Generate a `.b4xpplib` source package. |
+| `#ProjectB4JDependsOn BANano` | B4J dependency. |
+| `#ProjectB4ADependsOn XUI` | B4A dependency. |
+| `#ProjectB4iDependsOn iXUI` | B4i dependency. |
+| `#B4XLib Name` | Package generated files as a native `.b4xlib`. |
+| `#B4XPPLib Name` | Package B4X++ source files as a `.b4xpplib`. |
 | `#B4XPPLibDependsOn B4XPP.Core` | Import a B4X++ source package. |
+| `#BANanoApp AppName` | BANano app name metadata. |
+| `#BANanoTitle "Title"` | BANano page title metadata. |
+| `#BANanoOutput www` | BANano output metadata for tooling. |
+| `#BANanoLiveSwap True` | BANano live-swap metadata for tooling. |
 
-OOP language constructs are natural keywords in v0.5:
+`#BANano...` directives are consumed by B4X++ tooling and removed from the generated `.bas`. The current BANano sample still writes `BANano.Initialize(...)` and `BANano.Header.Title = ...` explicitly in `AppStart`; the directives are used for project metadata, defaults, the integrated server and the future designer.
 
-| B4X++ keyword | Meaning |
-| --- | --- |
-| `Class` / `End Class` | B4X++ class source block. |
-| `Interface` / `End Interface` | Interface contract. |
-| `StaticCode` / `End StaticCode` | Static B4X code module. |
-| `Constructor` / `End Constructor` | Generates `Initialize`, `Initialize2`, etc. |
-| `Property` | Generates backing field and B4X getter/setter. |
-| `Extends` | Flatten parent class into generated class module. |
-| `Implements` | Declare implemented interface(s). |
-| `Abstract` | Require child implementation. |
-| `Virtual` | Mark a method as overridable. |
-| `Override` | Override a parent method. |
-| `Final` | Prevent inheritance or overriding. |
-| `Protected` | Source-level protected member, lowered safely for B4X. |
-| `Super` | Call flattened parent implementation. |
-| `This` | Reference current B4X++ instance. |
-| `Poly` | Explicit dynamic dispatch through a base class or interface. |
-| `Closure` | Anonymous `Sub` value. |
-| `Async` / `Await` | Readable syntax over B4X resumable subs. |
-
-Legacy `#Class`, `#Interface`, `#Constructor`, `#StaticCode`, `#End Class`, `#End Interface`, `#End Constructor`, and `#End StaticCode` are still accepted for compatibility.
-
-Important: `#Property` is native B4X. B4X++ generated properties use bare `Property`.
+## Quick start: B4J Non-UI
 
 ```b4x
-Property Name As String = "Unknown"  ' B4X++: generates mName, getName, setName
-#Property NativeB4XName As String    ' B4X: preserved as-is in generated .bas
+#Project B4J-NonUI AnimalDemo
+#Package b4xpp.examples.animals
+#ProjectDir b4x-ide-projects/AnimalDemo-b4j
+#MainModule Main
+
+#Include "models/Animal.bx"
+#Include "models/Dog.bx"
+
+Sub Process_Globals
+End Sub
+
+Sub AppStart(Args() As String)
+    Dim dog As Dog
+    dog.Initialize("Buddy")
+    Log(dog.Speak)
+End Sub
 ```
 
-## OOP Snippets
+Run:
+
+```text
+B4X++: Sync #Project
+B4X++: Build Current #Project + Remap Errors
+```
+
+## Quick start: BANano + BANanoSkeleton
+
+```b4x
+#Project BANano B4XPPBananoSkeletonHello
+#Package b4xpp.examples.banano
+#ProjectDir b4x-ide-projects/B4XPPBananoSkeletonHello-banano
+#MainModule Main
+
+#ProjectB4JDependsOn BANano
+#ProjectB4JDependsOn BANanoSkeleton
+#BANanoApp B4XPPBananoSkeletonHello
+#BANanoTitle "B4X++ BANanoSkeleton"
+
+Sub Process_Globals
+    Private BANano As BANano 'ignore
+End Sub
+
+Sub AppStart(Form1 As Form, Args() As String)
+    BANano.Initialize("BANano", "B4XPPBananoSkeletonHello", 1)
+    BANano.Header.Title = "B4X++ BANanoSkeleton"
+    BANano.JAVASCRIPT_NAME = "app.js"
+    BANano.TranspilerOptions.MergeAllCSSFiles = True
+    BANano.TranspilerOptions.MergeAllJavascriptFiles = True
+    BANano.TranspilerOptions.RemoveDeadCode = False
+
+    SKTools.WriteTheme
+    BANano.Build(File.DirApp)
+
+    #If Release
+    ExitApplication
+    #End If
+End Sub
+
+Sub BANano_Ready()
+    Dim body As BANanoElement
+    body.Initialize("#body")
+    body.Append($"
+<div class=""container"" style=""margin-top: 32px;"">
+  <h1>B4X++ + BANanoSkeleton</h1>
+  <p>This page was generated from a .bx source.</p>
+  <button class=""button-primary"">Hello BANano</button>
+</div>
+"$)
+End Sub
+
+#If CSS
+body {
+    background: #f6f8fb;
+}
+#End If
+```
+
+BANano build workflow:
+
+1. `B4X++: Sync #Project` generates the B4J project.
+2. `B4X++: Build Current #Project + Remap Errors` runs `B4JBuilder`.
+3. B4X++ runs the generated jar so BANano can produce `Objects/<AppName>/index.html` and JavaScript.
+4. B4X++ asks whether to serve the generated web output locally.
+
+Do not open BANano `index.html` directly with `file://` if the app uses manifest, fetch, live.js or service-worker features. Use:
+
+```text
+B4X++: Serve BANano Output
+```
+
+## BANano web syntax support
+
+B4X++ understands BANano web zones:
+
+```b4x
+#If CSS
+body {
+    background: #297eff;
+}
+#End If
+```
+
+```b4x
+#If JAVASCRIPT
+console.log("Hello from BANano");
+#End If
+```
+
+```b4x
+#If SmartJavaScript
+${coords} = [{x: [1, 2, 3], y: [1, 4, 9]}]
+#End If
+```
+
+SmartStrings are treated as normal B4X strings by default:
+
+```b4x
+Dim name As String = "B4X++"
+Dim message As String = $"Hello ${name}"$
+```
+
+SmartStrings that contain HTML get embedded HTML highlighting and lightweight completions:
+
+```b4x
+body.Append($"
+<div class=""container"">
+  <h1>Hello ${name}</h1>
+</div>
+"$)
+```
+
+`${name}` supports B4X navigation back to the local or global symbol.
+
+BANano-specific SmartString markers such as `[BANRAW]` and `[BANCLEAN]` are preserved.
+
+## Native B4X browsing
+
+B4X++ is also useful when opening native B4X projects directly. It supports:
+
+- `.bas`
+- `.b4j`
+- `.b4a`
+- `.b4i`
+
+Features include syntax highlighting, Outline / Document Symbols, Go to Definition, hover, basic diagnostics and project-file links to modules.
+
+Use this when you only want to inspect a native B4X project without converting it to B4X++.
+
+## OOP language snippets
 
 ### Interface
 
@@ -146,7 +302,7 @@ Sub Move(Distance As Int) As String
 End Interface
 ```
 
-### Base Class
+### Base class
 
 ```b4x
 Class Animal Abstract Implements IAnimal
@@ -168,7 +324,7 @@ End Sub
 End Class
 ```
 
-### Class Extends
+### Extends / Override / Super
 
 ```b4x
 Class Dog Extends Animal Final
@@ -179,10 +335,6 @@ End Constructor
 
 Override Sub Speak As String
     Return Super.Name & " says woof"
-End Sub
-
-Override Sub Move(Distance As Int) As String
-    Return Super.Name & " runs " & Distance & " m"
 End Sub
 
 End Class
@@ -216,126 +368,7 @@ Public Sub setScore(B4XPP_Score As Int)
 End Sub
 ```
 
-### Custom Property Accessors
-
-```b4x
-Class LabelModel
-
-Property Public Text As String = ""
-
-Public Get Text As String
-    Return mText.ToUpperCase
-End Get
-
-Public Set Text(Value As String)
-    mText = Value.Trim
-End Set
-
-End Class
-```
-
-### Property Read / Write Sugar
-
-Inside class methods, B4X++ can rewrite readable property usage to classic B4X getter/setter calls:
-
-```b4x
-If Broken Then Return 0
-Broken = True
-Visible = False
-Return Points
-```
-
-Generated shape:
-
-```b4x
-If getBroken Then Return 0
-setBroken(True)
-setVisible(False)
-Return getPoints
-```
-
-### Abstract / Virtual / Override / Final
-
-```b4x
-Class BaseComponent Abstract
-
-Abstract Sub ComponentType As String
-
-Virtual Sub Render As String
-    Return "base"
-End Sub
-
-Final Sub Signature As String
-    Return ComponentType & "-" & DateTime.Now
-End Sub
-
-End Class
-```
-
-```b4x
-Class ButtonComponent Extends BaseComponent Final
-
-Override Sub ComponentType As String
-    Return "button"
-End Sub
-
-Override Sub Render As String
-    Return Super.Render & ":button"
-End Sub
-
-End Class
-```
-
-### Protected Members
-
-```b4x
-Class GameEntity
-
-Property Protected X As Float = 0
-Property Protected Y As Float = 0
-
-Protected Sub FormatPosition As String
-    Return "(" & getX & "," & getY & ")"
-End Sub
-
-End Class
-```
-
-B4X has no direct `Protected` keyword in class modules, so B4X++ validates protected access at source level and lowers generated members safely.
-
-### Super and This
-
-```b4x
-Override Sub Render As String
-    Return Super.Render & " type=" & This.ComponentType
-End Sub
-```
-
-`Super.Method` becomes a generated flattened parent method call such as `B4XPP_Super_Base_Render`.
-
-### Natural Polymorphism
-
-```b4x
-Dim animal As Animal
-
-animal = dogInstance
-Log(animal.Speak)
-
-animal = catInstance
-Log(animal.Move(3))
-```
-
-When B4X++ can prove that assigned child classes extend the declared base class, it generates safe object storage and dynamic dispatch.
-
-### Explicit Poly
-
-```b4x
-Dim renderable As Poly IRenderable
-renderable = button
-Log(renderable.Render("dark", 2, True))
-```
-
-`Poly` is useful when the declared type is an interface or when you want to make dynamic dispatch explicit.
+Native B4X `#Property` is preserved as-is. B4X++ generated properties use bare `Property`.
 
 ### StaticCode
 
@@ -354,57 +387,7 @@ End Sub
 End StaticCode
 ```
 
-## Constructors and Overloads
-
-Multiple `Constructor` blocks generate B4X-compatible initializer overloads:
-
-```b4x
-Class Person
-
-Property Name As String = ""
-Property Age As Int = 0
-
-Constructor
-End Constructor
-
-Constructor(Name As String)
-    mName = Name
-End Constructor
-
-Constructor(Name As String, Age As Int)
-    mName = Name
-    mAge = Age
-End Constructor
-
-End Class
-```
-
-Generated shape:
-
-```b4x
-Public Sub Initialize
-End Sub
-
-Public Sub Initialize2(Name As String)
-End Sub
-
-Public Sub Initialize3(Name As String, Age As Int)
-End Sub
-```
-
-Method overloads by arity are also supported:
-
-```b4x
-Public Sub Draw(Text As String)
-End Sub
-
-Public Sub Draw(Text As String, Color As Int)
-End Sub
-```
-
-## Generics
-
-B4X++ generics are source-generation generics. They produce concrete B4X class modules for used type combinations.
+### Generics
 
 ```b4x
 Class Box(Of T)
@@ -431,103 +414,23 @@ Dim nameBox As Box(Of String)
 Dim countBox As Box(Of Int)
 ```
 
-Generated modules:
+B4X++ generates concrete modules such as `Box__String.bas` and `Box__Int.bas`.
 
-```text
-Box__String.bas
-Box__Int.bas
-```
-
-Nested generic usage is supported:
-
-```b4x
-Dim item As Pair(Of String, Box(Of Int))
-```
-
-Generated modules:
-
-```text
-Box__Int.bas
-Pair__String__Box__Int.bas
-```
-
-## B4XPP.Core
-
-The extension includes `B4XPP.Core.b4xpplib`, a source package with common generic helpers:
-
-```text
-Optional(Of T)
-Result(Of T)
-Pair(Of TFirst, TSecond)
-Box(Of T)
-TypedList(Of T)
-TypedMap(Of TKey, TValue)
-EventArgs(Of T)
-Task(Of T)
-B4XPPAsync
-```
-
-Use it with:
-
-```b4x
-#B4XPPLibDependsOn B4XPP.Core
-
-Dim names As TypedList(Of String)
-names.Add("B4X++")
-
-Dim result As Result(Of String)
-result.InitializeSuccess("OK")
-```
-
-B4X++ can automatically initialize local generated classes with parameterless `Initialize` before first use.
-
-## Closures
-
-Preferred syntax:
+### Closures
 
 ```b4x
 Sub Demo
-    Dim a As Int = 2
+    Dim factor As Int = 3
 
-    Dim add As Closure = Sub(i As Int) As Int
-        Return a + i
+    Dim multiply As Closure = Sub(value As Int) As Int
+        Return value * factor
     End Sub
 
-    Log(add(5))
+    Log(multiply.Run1(10))
 End Sub
 ```
 
-Local closures are lifted into generated private Subs when possible.
-
-When a closure escapes the local call site, B4X++ generates a `B4XPPClosure` runtime value:
-
-```b4x
-Dim factor As Int = 3
-Dim multiply As Closure = Sub(value As Int) As Int
-    Return value * factor
-End Sub
-
-runner.Add("triple", multiply)
-```
-
-Separate assignment is supported:
-
-```b4x
-Dim factory As Closure
-factory = Sub(name As String) As Dog
-    Dim dogInstance As Dog
-    dogInstance.Initialize(name)
-    Return dogInstance
-End Sub
-
-Dim buddy As Dog = factory.Run1("Buddy")
-```
-
-Generated B4X never keeps `factory = Sub(...)`; it creates a `B4XPPClosure` and lifts the body.
-
-## Async / Await
-
-B4X++ async syntax is sugar over native B4X resumable subs.
+### Async / Await
 
 ```b4x
 Public Async Sub SumLater(a As Int, b As Int) As Int
@@ -535,13 +438,13 @@ Public Async Sub SumLater(a As Int, b As Int) As Int
     Return a + b
 End Sub
 
-Public Async Sub AppStart (Args() As String)
+Public Async Sub AppStart(Args() As String)
     Dim total As Int = Await SumLater(1, 2)
     Log(total)
 End Sub
 ```
 
-Generated shape:
+Generated B4X shape:
 
 ```b4x
 Public Sub SumLater(a As Int, b As Int) As ResumableSub
@@ -549,48 +452,33 @@ Public Sub SumLater(a As Int, b As Int) As ResumableSub
     Return a + b
 End Sub
 
-Public Sub AppStart (Args() As String)
-    Wait For (SumLater(1, 2)) Complete (total As Int)
+Public Sub AppStart(Args() As String)
+    Wait For (SumLater(1, 2)) Complete(total As Int)
     Log(total)
 End Sub
 ```
 
-MVP supported forms:
+`BANano.Await(...)` is preserved as a BANano method call and is not rewritten by the B4X++ `Await` transform.
+
+### Natural polymorphism and `Poly`
 
 ```b4x
-Dim value As T = Await SomeResumableSub()
-value = Await SomeResumableSub()
-Return Await SomeResumableSub()
-Await SomeResumableSub()
+Dim animal As Animal
+animal = dog
+Log(animal.Speak)
 ```
-
-Complex expression awaits such as `Log((Await Load()).Name)` should be written with a temporary variable.
-
-## B4XPP.Net
-
-`B4XPP.Net.b4xpplib` provides async-friendly HTTP helpers:
 
 ```b4x
-#B4XPPLibDependsOn B4XPP.Net
-
-Public Async Sub FetchText(Url As String) As String
-    Dim response As B4XPPHttpResponse = Await B4XPPHttp.Get(Url)
-    If response.Success Then Return response.Body
-    Return response.ErrorMessage
-End Sub
+Dim renderable As Poly IRenderable
+renderable = button
+Log(renderable.Render("dark"))
 ```
 
-It declares native dependencies per platform:
+## Source packages and libraries
 
-```text
-B4J: jOkHttpUtils2
-B4A: OkHttpUtils2
-B4i: iHttpUtils2
-```
+### `.b4xpplib`
 
-## B4XPPLib Source Packages
-
-A `.b4xpplib` is a B4X++ source package. It ships `.bx` files, not generated `.bas` files. The consuming project transpiles the package as part of its own build.
+A `.b4xpplib` is a B4X++ source package. It ships `.bx` files, not generated `.bas` files.
 
 Package source:
 
@@ -613,18 +501,16 @@ Consumer:
 #B4XPPLibDependsOn SharedModels
 #MainModule Main
 
-Sub AppStart (Args() As String)
+Sub AppStart(Args() As String)
     Dim animal As SharedAnimal
     animal.Initialize
     Log(animal.Speak)
 End Sub
 ```
 
-Do not add `.b4xpplib` packages as native B4X `LibraryN` entries. B4X++ consumes them, generates the required `.bas` modules, and filters them out of native project libraries.
+### `.b4xlib`
 
-## B4XLib Packaging
-
-B4X++ can package generated modules as a regular `.b4xlib`:
+B4X++ can package generated modules as a regular B4X library:
 
 ```b4x
 #B4XLib AnimalComponents
@@ -641,61 +527,76 @@ Run:
 B4X++: Build .b4xlib
 ```
 
-## Build and Error Remapping
+## Included source packages
 
-B4X++ can sync the native project, call the platform builder, capture compiler output, and remap errors back to `.bx` source lines.
+The extension ships with:
 
-Commands:
+```text
+B4XPP.Core.b4xpplib
+B4XPP.Net.b4xpplib
+```
+
+`B4XPP.Core` includes helpers such as:
+
+```text
+Optional(Of T)
+Result(Of T)
+Pair(Of TFirst, TSecond)
+Box(Of T)
+TypedList(Of T)
+TypedMap(Of TKey, TValue)
+EventArgs(Of T)
+Task(Of T)
+B4XPPAsync
+```
+
+Use it with:
+
+```b4x
+#B4XPPLibDependsOn B4XPP.Core
+
+Dim result As Result(Of String)
+result.InitializeSuccess("OK")
+```
+
+`B4XPP.Net` provides async-friendly HTTP helpers over platform HTTP libraries.
+
+## IntelliSense and diagnostics
+
+B4X++ provides:
+
+- completions for local variables, globals, classes, interfaces, static modules, methods, properties and external library members;
+- member completions from `.xml`, `.b4xlib`, `.b4xpplib` and workspace source files;
+- hover for B4X++ and native B4X symbols;
+- Go to Definition for includes, classes, methods, properties, variables, dependency symbols and SmartString `${...}` variables;
+- signature help for normal and chained method calls;
+- chained member resolution such as `Layout.LastRow.Column(1).MarginBottom`;
+- chained initializer/member resolution inside assignments such as `Dim tp As SKTagPicker = Layout.LastRow.Column(1).Add.TagPicker(...)`;
+- diagnostics for unknown symbols, argument counts, type mismatches, invalid inheritance/override usage and CustomView metadata;
+- generated source maps under `.b4xpp/sourceMap.json`.
+
+## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `B4X++: Build B4J + Remap Errors` | Run B4J build and map errors. |
-| `B4X++: Build B4A + Remap Errors` | Run B4A build and map errors. |
-| `B4X++: Build B4i + Remap Errors` | Run a configured B4i build command and map errors. |
-| `B4X++: Build Current #Project + Remap Errors` | Pick platform from `#Project`. |
-| `B4X++: Remap B4X Compiler / Runtime Errors` | Remap pasted compiler/runtime output. |
+| `B4X++: Create Example Project` | Create an example project in the workspace. |
+| `B4X++: Generate .bas Files` | Generate native `.bas` files only. |
+| `B4X++: Sync #Project` | Generate/sync the native B4X project. |
+| `B4X++: Build Current #Project + Remap Errors` | Build using the platform from `#Project`. |
+| `B4X++: Build B4J + Remap Errors` | Build B4J and map errors back to `.bx`. |
+| `B4X++: Build B4A + Remap Errors` | Build B4A and map errors back to `.bx`. |
+| `B4X++: Build B4i + Remap Errors` | Run configured B4i build command and remap errors. |
+| `B4X++: Build .b4xlib` | Package native `.b4xlib`. |
+| `B4X++: Build .b4xpplib` | Package B4X++ source library. |
+| `B4X++: Run BANano Generator JAR` | Run the generated BANano jar to emit web files. |
+| `B4X++: Serve BANano Output` | Serve `Objects/<AppName>/index.html` locally. |
+| `B4X++: Refresh IntelliSense Index` | Reindex sources and libraries. |
+| `B4X++: Configure B4X++ Settings` | Edit global toolchain/library settings. |
+| `B4X++: Configure Current Project Settings` | Edit current project settings/directives. |
+| `B4X++: Set Current File Language to B4X` | Force native B4X language mode. |
+| `B4X++: Generate Debug Bundle` | Create a diagnostic bundle for bug reports. |
 
-Typical B4J settings:
-
-```json
-{
-  "b4xpp.b4j.builderPath": "C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe",
-  "b4xpp.buildTask": "Build",
-  "b4xpp.buildConfiguration": "Default",
-  "b4xpp.buildShowWarnings": true,
-  "b4xpp.buildUseBaseFolder": true
-}
-```
-
-Custom command placeholders:
-
-```text
-{project}
-{workspace}
-{projectDir}
-{configuration}
-{task}
-```
-
-Example:
-
-```json
-{
-  "b4xpp.b4jBuildCommand": "\"C:\\Program Files\\Anywhere Software\\B4J\\B4JBuilder.exe\" -Task=Build -Project={project} -BaseFolder={projectDir} -Configuration={configuration} -ShowWarnings=True"
-}
-```
-
-## IntelliSense and Diagnostics
-
-The extension provides:
-
-- Go to Definition for classes, methods, properties, includes, dependencies, `Wait For (...) Complete (...)` result variables, and resumable-sub calls;
-- hover documentation for B4X++ symbols and indexed B4X libraries;
-- type and member completions from workspace sources, `.xml`, `.b4xlib`, and `.b4xpplib` packages;
-- diagnostics for unknown symbols, method argument count, type mismatches, inheritance issues, custom-view metadata, and unsafe B4X names;
-- source maps under `.b4xpp/sourceMap.json` for generated-line to source-line mapping.
-
-## Snippet Prefixes
+## Snippet prefixes
 
 Common snippet prefixes:
 
@@ -705,14 +606,15 @@ Common snippet prefixes:
 | `project-b4j-ui` | B4J UI project header. |
 | `project-b4a` | B4A project header. |
 | `project-b4i` | B4i project header. |
+| `project-banano` | BANano project header. |
 | `include` | `#Include "..."`. |
-| `class` | B4X++ class with property and constructor. |
-| `interface` | B4X++ interface. |
+| `class` | B4X++ class template. |
+| `interface` | Interface template. |
 | `extends` | Class extending another class. |
 | `implements` | Class implementing an interface. |
-| `property` | B4X++ generated property. |
-| `property-ro` | Read-only generated property. |
-| `property-wo` | Write-only generated property. |
+| `property` | Generated property. |
+| `property-ro` | Read-only property. |
+| `property-wo` | Write-only property. |
 | `constructor` | Constructor block. |
 | `constructor-overload` | Constructor overload block. |
 | `override` | Override method. |
@@ -725,49 +627,81 @@ Common snippet prefixes:
 | `await` | Await assignment pattern. |
 | `generic-class` | Generic class template. |
 | `generic-use` | Generic variable usage. |
-| `b4xlib` | B4XLib packaging directives. |
-| `b4xpplib` | B4XPPLib source package directives. |
+| `b4xlib` | B4XLib directives. |
+| `b4xpplib` | B4XPPLib directives. |
+| `banano-ready` | `BANano_Ready` skeleton. |
+| `banano-html` | BANano HTML SmartString append. |
+| `banano-css` | `#If CSS` block. |
+| `banano-js` | `#If JAVASCRIPT` block. |
+
+Actual snippet availability depends on the bundled `snippets/b4xpp.json`.
 
 ## Examples
 
-Included example projects:
+Included examples vary by package, but the extension includes or supports:
 
-- `basic-animal`: small OOP example with `Animal`, `Dog`, `Cat`, and `Bird`.
-- `language-showcase`: broad syntax and IntelliSense showcase.
-- `closure-console`: closures and captured variables.
-- `generic-core`: generic utilities from `B4XPP.Core`.
-- `xui-breakout`: B4J UI / XUI game sample.
-- `oop-dungeon-arena`: heavier OOP sample with inheritance, interfaces, `Poly`, and services.
-- `B4XAnalogClock-B4XPP-PoC-v0.1`: CustomView-oriented proof of concept.
+- OOP animal demo.
+- Language showcase.
+- Closures demo.
+- Generic core demo.
+- XUI / B4J UI demos.
+- B4XLib / CustomView-oriented samples.
+- BANanoSkeleton web sample.
 
-Use `B4X++: Create Example Project` to create a fresh sample in the workspace.
+Use:
 
-## Design Notes
+```text
+B4X++: Create Example Project
+```
 
-B4X++ favors generated code that remains understandable:
+## Design principles
+
+B4X++ favors generated code that stays understandable:
 
 - generated `.bas` files are plain B4X modules;
-- inheritance is flattened instead of relying on unavailable runtime inheritance;
+- inheritance is flattened into generated methods;
+- `Super` calls are lowered to generated parent-call helpers;
 - async uses B4X resumable subs;
-- generic classes are specialized into concrete B4X class modules;
-- native B4X directives such as `#DesignerProperty`, `#Event`, and `#Property` are preserved.
+- generics are compile-time source specializations;
+- native B4X directives are preserved;
+- BANano remains a real B4J/BANano project, not a separate runtime.
 
-This keeps the bridge honest: B4X++ improves source ergonomics and editor tooling, but the final application still belongs to the B4X compiler and runtime.
+## Roadmap after v0.6.0
+
+The next large direction is the BANano visual designer:
+
+- read `.bjl` layouts;
+- infer BANano parent/child relationships from rectangles;
+- render BANanoSkeleton components in a live VS Code WebView;
+- edit properties and save back to layout files;
+- generate members/events into `.bx` files;
+- optionally run the real BANano build preview when needed.
+
+The goal is a design-time renderer that is instant, with real BANano generation used for validation and final preview.
 
 ## Contributing
 
 Contributions are welcome.
 
-Good places to help:
+Good ways to help:
 
-- test B4J, B4A, and B4i build workflows on real installations;
-- report cases where generated B4X is not accepted by the official IDEs;
-- improve B4X library indexing and diagnostics;
-- add focused examples for common B4X components;
-- expand async wrappers in `B4XPP.Core` and `B4XPP.Net`;
-- improve documentation and snippets.
+- test B4J, B4A, B4i and BANano workflows on real installations;
+- report compiler errors where generated B4X is not accepted by the official IDEs;
+- improve library indexing from `.xml`, `.b4xlib` and `.b4xpplib` files;
+- add BANanoSkeleton component metadata and examples;
+- improve embedded HTML/CSS/JS IntelliSense;
+- add focused examples for common B4X/BANano components;
+- improve docs, snippets and diagnostics.
 
-Please keep changes compatible with classic B4X output. A feature is usually a good fit when it can be explained as clean `.bx` syntax that generates understandable `.bas`.
+When contributing, please keep the output compatible with classic B4X. A feature is usually a good fit if it can be explained as clean `.bx` syntax that generates understandable `.bas`.
+
+Suggested bug-report bundle:
+
+```text
+B4X++: Generate Debug Bundle
+```
+
+Please include the `.bx` source, generated `.bas`, relevant `.b4j/.b4a/.b4i` project file and compiler output when possible.
 
 ## License
 

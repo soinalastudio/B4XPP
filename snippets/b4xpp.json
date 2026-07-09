@@ -402,5 +402,40 @@
       "Dim ${1:result} As ${2:Object} = Await ${3:SomeAsyncCall}(${4})"
     ],
     "description": "Await a ResumableSub / Async Sub result"
+  },
+  "BANano project": {
+    "prefix": "banano-project",
+    "body": [
+      "#Project BANano ${1:MyBANanoApp}",
+      "#Package ${2:com.example.app}",
+      "#ProjectDir b4x-ide-projects/${1:MyBANanoApp}-banano",
+      "#MainModule Main",
+      "",
+      "#ProjectB4JDependsOn BANano",
+      "#ProjectB4JDependsOn BANanoSkeleton",
+      "#BANanoApp ${1:MyBANanoApp}",
+      "#BANanoTitle \"${3:My BANano App}\""
+    ],
+    "description": "B4X++ BANano project directives"
+  },
+  "BANano CSS block": {
+    "prefix": "ifcss",
+    "body": [
+      "#If CSS",
+      "${1:body {",
+      "    ${2:background: #f6f8fb;}",
+      "}",
+      "#End If"
+    ],
+    "description": "BANano embedded CSS block"
+  },
+  "BANano JavaScript block": {
+    "prefix": "ifjs",
+    "body": [
+      "#If JAVASCRIPT",
+      "${1:console.log(\"BANano\");}",
+      "#End If"
+    ],
+    "description": "BANano embedded JavaScript block"
   }
 }

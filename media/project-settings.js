@@ -31,9 +31,9 @@
   }
 
   let state = parseInitialState();
-  const arrayKeys = ['b4j.internalLibraryDirs', 'b4j.additionalLibraryDirs', 'b4a.internalLibraryDirs', 'b4a.additionalLibraryDirs', 'b4i.internalLibraryDirs', 'b4i.additionalLibraryDirs'];
-  const boolKeys = ['validation.strict', 'enableSemanticDiagnostics', 'addGeneratedHeader', 'overwriteGeneratedFiles', 'buildShowWarnings', 'buildUseBaseFolder'];
-  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform', 'b4j.builderPath', 'b4a.builderPath', 'b4i.builderPath', 'b4jBuildCommand', 'b4aBuildCommand', 'b4iBuildCommand', 'buildConfiguration', 'buildTask'];
+  const arrayKeys = [];
+  const boolKeys = ['addGeneratedHeader', 'overwriteGeneratedFiles'];
+  const stringKeys = ['sourceDir', 'outputDir', 'projectDir', 'b4xlibDir', 'b4xpplibDir', 'packageName', 'platform', 'buildConfiguration'];
   const dirStringKeys = ['mainBxPath', 'projectPlatform', 'projectName', 'packageName', 'projectDir', 'mainModule', 'b4xLib', 'b4xLibVersion', 'b4xLibAuthor', 'b4xLibDir', 'b4xppLib', 'b4xppLibVersion', 'b4xppLibAuthor', 'b4xppLibDir'];
   const dirArrayKeys = ['projectDependsOn', 'projectB4JDependsOn', 'projectB4ADependsOn', 'projectB4iDependsOn', 'b4xLibDependsOn', 'b4xLibB4JDependsOn', 'b4xLibB4ADependsOn', 'b4xLibB4iDependsOn', 'b4xppLibSupportedPlatforms', 'b4xppLibDependsOn', 'b4xppLibB4JDependsOn', 'b4xppLibB4ADependsOn', 'b4xppLibB4iDependsOn'];
 
@@ -190,6 +190,7 @@
   }
   function reload() { postToExtension({ type: 'reload' }); }
   function openJson() { postToExtension({ type: 'openSettingsJson' }); }
+  function openGlobalSettings() { postToExtension({ type: 'openB4XPPSettings' }); }
   function reloadLibraries() { postToExtension({ type: 'loadLibraries', values: collectValues() }); }
   function importIdeHeader() { postToExtension({ type: 'importIdeProjectHeader', values: collectValues() }); }
   function browseDir(key) { postToExtension({ type: 'browseDir', key: key }); }
@@ -205,6 +206,8 @@
     if (openJsonBtn) openJsonBtn.addEventListener('click', openJson);
     const importIdeHeaderBtn = el('importIdeHeader');
     if (importIdeHeaderBtn) importIdeHeaderBtn.addEventListener('click', importIdeHeader);
+    const openGlobalSettingsBtn = el('openGlobalSettings');
+    if (openGlobalSettingsBtn) openGlobalSettingsBtn.addEventListener('click', openGlobalSettings);
     document.querySelectorAll('[data-browse]').forEach(btn => {
       btn.addEventListener('click', () => browseDir(btn.getAttribute('data-browse')));
     });
@@ -236,7 +239,7 @@
     try {
       wireButtons();
       applyState(state);
-      setStatus('UI ready: generics-0.4.2');
+      setStatus('UI ready: project settings v0.5.10');
       postToExtension({ type: 'ready' });
     } catch (err) {
       setStatus('B4X++ WebView script error: ' + (err && err.message ? err.message : err));

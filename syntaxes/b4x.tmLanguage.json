@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "B4X++",
-  "scopeName": "source.b4xpp",
+  "name": "B4X",
+  "scopeName": "source.b4x",
   "patterns": [
     {
       "include": "#comments"
@@ -40,32 +40,32 @@
     "strings": {
       "patterns": [
         {
-          "name": "meta.embedded.inline.html.b4xpp",
+          "name": "meta.embedded.inline.html.b4x",
           "begin": "\\$\\\"(?=\\s*(?:<!DOCTYPE\\s+html\\b|</?[A-Za-z][\\w:-]*(?:\\s|>|/)))",
           "beginCaptures": {
             "0": {
-              "name": "punctuation.definition.string.begin.b4xpp"
+              "name": "punctuation.definition.string.begin.b4x"
             }
           },
           "end": "\\\"\\$",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.b4xpp"
+              "name": "punctuation.definition.string.end.b4x"
             }
           },
           "patterns": [
             {
-              "name": "meta.interpolation.b4x.b4xpp",
+              "name": "meta.interpolation.b4x.b4x",
               "begin": "\\$\\{",
               "end": "\\}",
               "patterns": [
                 {
-                  "include": "source.b4xpp"
+                  "include": "source.b4x"
                 }
               ]
             },
             {
-              "name": "constant.character.escape.b4xpp",
+              "name": "constant.character.escape.b4x",
               "match": "\\\"\\\""
             },
             {
@@ -74,32 +74,32 @@
           ]
         },
         {
-          "name": "meta.embedded.inline.html.b4xpp",
+          "name": "meta.embedded.inline.html.b4x",
           "begin": "\\$\\\"\\s*$",
           "beginCaptures": {
             "0": {
-              "name": "punctuation.definition.string.begin.b4xpp"
+              "name": "punctuation.definition.string.begin.b4x"
             }
           },
           "end": "\\\"\\$",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.b4xpp"
+              "name": "punctuation.definition.string.end.b4x"
             }
           },
           "patterns": [
             {
-              "name": "meta.interpolation.b4x.b4xpp",
+              "name": "meta.interpolation.b4x.b4x",
               "begin": "\\$\\{",
               "end": "\\}",
               "patterns": [
                 {
-                  "include": "source.b4xpp"
+                  "include": "source.b4x"
                 }
               ]
             },
             {
-              "name": "constant.character.escape.b4xpp",
+              "name": "constant.character.escape.b4x",
               "match": "\\\"\\\""
             },
             {
@@ -108,36 +108,36 @@
           ]
         },
         {
-          "name": "meta.embedded.inline.javascript.b4xpp",
+          "name": "meta.embedded.inline.javascript.b4x",
           "begin": "\\$\\\"(?=\\s*\\[BAN(?:RAW|CLEAN)\\]\\s*[\\{\\[])",
           "beginCaptures": {
             "0": {
-              "name": "punctuation.definition.string.begin.b4xpp"
+              "name": "punctuation.definition.string.begin.b4x"
             }
           },
           "end": "\\\"\\$",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.b4xpp"
+              "name": "punctuation.definition.string.end.b4x"
             }
           },
           "patterns": [
             {
-              "name": "meta.interpolation.b4x.b4xpp",
+              "name": "meta.interpolation.b4x.b4x",
               "begin": "\\$\\{",
               "end": "\\}",
               "patterns": [
                 {
-                  "include": "source.b4xpp"
+                  "include": "source.b4x"
                 }
               ]
             },
             {
-              "name": "constant.language.banano.smartstring.b4xpp",
+              "name": "constant.language.banano.smartstring.b4x",
               "match": "(?i)\\[BAN(?:RAW|CLEAN)\\]"
             },
             {
-              "name": "constant.character.escape.b4xpp",
+              "name": "constant.character.escape.b4x",
               "match": "\\\"\\\""
             },
             {
@@ -146,43 +146,43 @@
           ]
         },
         {
-          "name": "string.quoted.smart.b4x.b4xpp",
+          "name": "string.quoted.smart.b4x.b4x",
           "begin": "\\$\\\"",
           "beginCaptures": {
             "0": {
-              "name": "punctuation.definition.string.begin.b4xpp"
+              "name": "punctuation.definition.string.begin.b4x"
             }
           },
           "end": "\\\"\\$",
           "endCaptures": {
             "0": {
-              "name": "punctuation.definition.string.end.b4xpp"
+              "name": "punctuation.definition.string.end.b4x"
             }
           },
           "patterns": [
             {
-              "name": "meta.interpolation.b4x.b4xpp",
+              "name": "meta.interpolation.b4x.b4x",
               "begin": "\\$\\{",
               "end": "\\}",
               "patterns": [
                 {
-                  "include": "source.b4xpp"
+                  "include": "source.b4x"
                 }
               ]
             },
             {
-              "name": "constant.character.escape.b4xpp",
+              "name": "constant.character.escape.b4x",
               "match": "\\\"\\\""
             }
           ]
         },
         {
-          "name": "string.quoted.double.b4xpp",
+          "name": "string.quoted.double.b4x",
           "begin": "\\\"",
           "end": "\\\"",
           "patterns": [
             {
-              "name": "constant.character.escape.b4xpp",
+              "name": "constant.character.escape.b4x",
               "match": "\\\"\\\""
             }
           ]
@@ -193,7 +193,7 @@
       "patterns": [
         {
           "name": "keyword.control.directive.b4xpp",
-          "match": "(?i)^\\s*#(?:Project|Package|ProjectDir|MobileMain|MainModule|ProjectDependsOn|ProjectB4ADependsOn|ProjectB4JDependsOn|ProjectB4iDependsOn|BANano[A-Za-z0-9_]*|B4XLib|B4XLibDir|B4XLibVersion|B4XLibAuthor|B4XLibSupportedPlatforms|B4XLibDependsOn|B4XLibB4ADependsOn|B4XLibB4JDependsOn|B4XLibB4iDependsOn|B4XPPLib|B4XPPLibDir|B4XPPLibVersion|B4XPPLibAuthor|B4XPPLibSupportedPlatforms|B4XPPLibDependsOn|B4XPPLibB4ADependsOn|B4XPPLibB4JDependsOn|B4XPPLibB4iDependsOn|LibraryFilesDir|Version|Author|DependsOn|B4ADependsOn|B4JDependsOn|B4iDependsOn|SupportedPlatforms|ShortName|Include|Interface|End\\s+Interface|Class|End\\s+Class|MainModule|Extends|Implements|Abstract|Final|Constructor|End\\s+Constructor|Property|Region|End\\s+Region|If|Else|End\\s+If|IgnoreWarnings|DesignerProperty|Event|RaisesSynchronousEvents|AdditionalJar|AdditionalLib|BridgeLogger|CustomBuildAction|DebuggerForceStandardAssets|DebuggerForceFullDeployment|ExcludedLib|LibraryAuthor|LibraryName|LibraryVersion|Macro|MacroAfter|MacroEnd|MergeLibraries|ModuleVisibility|PackagerProperty|SupportedOrientations|VersionCode|VersionName)\\b"
+          "match": "(?i)^\\s*#(?:Project|Package|ProjectDir|MobileMain|MainModule|ProjectDependsOn|ProjectB4ADependsOn|ProjectB4JDependsOn|ProjectB4iDependsOn|BANano[A-Za-z0-9_]*|B4XLib|B4XLibDir|B4XLibVersion|B4XLibAuthor|B4XLibSupportedPlatforms|B4XLibDependsOn|B4XLibB4ADependsOn|B4XLibB4JDependsOn|B4XLibB4iDependsOn|B4XPPLib|B4XPPLibDir|B4XPPLibVersion|B4XPPLibAuthor|B4XPPLibSupportedPlatforms|B4XPPLibDependsOn|B4XPPLibB4ADependsOn|B4XPPLibB4JDependsOn|B4XPPLibB4iDependsOn|LibraryFilesDir|Version|Author|DependsOn|B4ADependsOn|B4JDependsOn|B4iDependsOn|SupportedPlatforms|ShortName|Include|Interface|End\\s+Interface|Class|End\\s+Class|MainModule|Extends|Implements|Abstract|Final|Constructor|End\\s+Constructor|Property|Region|End\\s+Region|If|Else|End\\s+If|IgnoreWarnings|DesignerProperty|Event|RaisesSynchronousEvents|AdditionalJar|AdditionalLib|BridgeLogger|CustomBuildAction|DebuggerForceStandardAssets|DebuggerForceFullDeployment|ExcludedLib|LibraryAuthor|LibraryName|LibraryVersion|Macro|MacroAfter|MacroEnd|MergeLibraries|ModuleVisibility|PackagerProperty|SupportedOrientations|VersionCode|VersionName|AppType|Build\\d+|File\\d+|FileGroup\\d+|Library\\d+|Module\\d+|NumberOfFiles|NumberOfLibraries|NumberOfModules|ManifestCode|Group|ModulesStructureVersion|Type|Version|EndOfDesignText|Activity|Service|Receiver)\\b"
         }
       ]
     },
@@ -224,7 +224,7 @@
     "embeddedCssBlock": {
       "patterns": [
         {
-          "name": "meta.embedded.block.css.b4xpp",
+          "name": "meta.embedded.block.css.b4x",
           "begin": "(?i)^\\s*(#If)\\s+(CSS)\\s*$",
           "beginCaptures": {
             "1": {
@@ -254,7 +254,7 @@
     "embeddedJavaScriptBlock": {
       "patterns": [
         {
-          "name": "meta.embedded.block.javascript.b4xpp",
+          "name": "meta.embedded.block.javascript.b4x",
           "begin": "(?i)^\\s*(#If)\\s+(JAVASCRIPT|JS|SMARTJAVASCRIPT|JAVASCRIPTSMART)\\s*$",
           "beginCaptures": {
             "1": {
